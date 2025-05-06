@@ -31,32 +31,69 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  *  POSSIBILITY OF SUCH DAMAGE.
  */
-#pragma once
-#include <stdint.h>
 
-struct frt_t {
-    uint8_t tcr;
-    uint8_t tcsr;
-    uint16_t frc;
-    uint16_t ocra;
-    uint16_t ocrb;
-    uint16_t icr;
-    uint8_t status_rd;
-};
+package vavi.sound.sc55;
 
-struct mcu_timer_t {
-    uint8_t tcr;
-    uint8_t tcsr;
-    uint8_t tcora;
-    uint8_t tcorb;
-    uint8_t tcnt;
-    uint8_t status_rd;
-};
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
+import javax.sound.midi.Receiver;
 
-void TIMER_Write(uint32_t address, uint8_t data);
-uint8_t TIMER_Read(uint32_t address);
-void TIMER_Clock(uint64_t cycles);
+import static java.lang.System.getLogger;
 
-void TIMER2_Write(uint32_t address, uint8_t data);
-uint8_t TIMER_Read2(uint32_t address);
 
+class Midi {
+
+    private static final Logger logger = getLogger(Midi.class.getName());
+
+    private final Mcu mcu;
+
+    Receiver s_midi_in;
+
+    Midi(Mcu mcu) {
+        this.mcu = mcu;
+    }
+
+    // callback
+    private void MidiOnReceive(double a, byte[] message, byte[] x) {
+
+        for (byte b : message)
+            mcu.MCU_PostUART(b);
+    }
+
+    int MIDI_Init(int port) {
+        if (s_midi_in != null) {
+            logger.log(Level.DEBUG, "MIDI already running");
+            return 0; // Already running
+        }
+
+//        s_midi_in = new RtMidiIn(RtMidi.UNSPECIFIED, "Nuked SC55", 1024);
+//        s_midi_in.ignoreTypes(false, false, false); // SysEx disabled by default
+//        s_midi_in.setCallback(MidiOnReceive, nullptr); // FIXME: (local bug) Fix the linking error
+//        s_midi_in.setErrorCallback(MidiOnError, nullptr);
+//
+//        unsigned count = Midis_midi_in.getPortCount();
+//
+//        if (count == 0) {
+//            logger.log(Level.TRACE, "No midi input");
+//            delete s_midi_in;
+//            s_midi_in = null;
+//            return 0;
+//        }
+//
+//        if (port < 0 || port >= count) {
+//            logger.log(Level.TRACE, "Out of range midi port is requested. Defaulting to port 0");
+//            port = 0;
+//        }
+//
+//        s_midi_in.openPort(port, "Nuked SC55");
+
+        return 1;
+    }
+
+    void MIDI_Quit() {
+        if (s_midi_in != null) {
+            s_midi_in.close();
+            s_midi_in = null;
+        }
+    }
+}

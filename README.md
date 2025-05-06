@@ -1,4 +1,28 @@
-# Nuked SC-55
+[![Release](https://jitpack.io/v/umjammer/vavi-sound-sc55.svg)](https://jitpack.io/#umjammer/vavi-sound-sc55)
+[![Java CI](https://github.com/umjammer/vavi-sound-sc55/actions/workflows/maven.yml/badge.svg)](https://github.com/umjammer/vavi-sound-sc55/actions/workflows/maven.yml)
+[![CodeQL](https://github.com/umjammer/vavi-sound-sc55/actions/workflows/codeql.yml/badge.svg)](https://github.com/umjammer/vavi-sound-sc55/actions/workflows/codeql.yml)
+![Java](https://img.shields.io/badge/Java-21-b07219)
+
+# vavi-sound-sc55
+
+Roland SC-55 emulator, by nukeykt.
+
+## Install
+
+## Usage
+
+## References
+
+ * https://github.com/nukeykt/Nuked-SC55/
+ * https://archive.org/details/rsc-55roms
+ * https://github.com/shingo45endo/sc55mk2-ctf-patcher
+
+## TODO
+
+---
+
+# Original
+
 Roland SC-55 emulator, by nukeykt.
 
 Supported models:
@@ -40,13 +64,13 @@ MCUs are emulated using info from their datasheets. PCM chip info is derived fro
 
 ### PCM chip tracing progress
 
-![pcm_tracing.jpg](pcm_tracing.jpg)
+<img alt="pcm_tracing.jpg" src="src/web/resources/pcm_tracing.jpg" width="320" />
 
 ### MCU emulation progress
 
-![mcu1.png](mcu1.png)
+<img alt="mcu1.jpg" src="src/web/resources/mcu1.png" width="320" /><br/>
 
-![mcu2.png](mcu2.png)
+<img alt="mcu2.jpg" src="src/web/resources/mcu2.png" width="320" />
 
 
 ## Install
