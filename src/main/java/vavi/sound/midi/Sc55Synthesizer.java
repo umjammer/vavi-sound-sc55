@@ -101,33 +101,18 @@ logger.log(Level.WARNING, "already open: " + hashCode());
         //
         isOpen = true;
 
-        executor.submit(this::play);
+        timestamp = System.currentTimeMillis();
+        start = timestamp;
     }
 
     /** when midi spi */
-    private final ExecutorService executor = Executors.newFixedThreadPool(2, r -> {
+    private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r);
         thread.setPriority(Thread.MIN_PRIORITY);
         return thread;
     });
 
     private long start;
-
-    /**
-     * when midi spi
-     */
-    private void play() {
-        timestamp = System.currentTimeMillis();
-        start = timestamp;
-
-        while (isOpen) {
-            try {
-                player.audio_output(); // TODO embed into main module?
-            } catch (Exception e) {
-                logger.log(Level.INFO, "Audio processing error: " + e.getMessage(), e);
-            }
-        }
-    }
 
     @Override
     @SuppressWarnings("ForLoopReplaceableByForEach")
@@ -179,7 +164,7 @@ logger.log(Level.WARNING, "already open: " + hashCode());
 
     @Override
     public int getMaxPolyphony() {
-        return 18; // TODO OPL3 class said
+        return 18; // TODO
     }
 
     @Override

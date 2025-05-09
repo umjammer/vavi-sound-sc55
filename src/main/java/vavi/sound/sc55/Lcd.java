@@ -73,7 +73,7 @@ class Lcd {
     private boolean lcd_enable = true;
     private boolean lcd_quit_requested = false;
 
-    private Mcu mcu;
+    private final Mcu mcu;
 
     Lcd(Mcu mcu) {
         this.mcu = mcu;
@@ -145,11 +145,11 @@ class Lcd {
                 LCD_DD_RAM &= 0x7f;
             }
         }
-        //logger.log(Level.TRACE, "%i %2x ".formatted(address, data));
-        // if (data >= 0x20 && data <= 'z')
-        //     logger.log(Level.TRACE, "%c".formatted(data));
-        //else
-        //    logger.log(Level.TRACE, "");
+//        logger.log(Level.TRACE, "%d %2x ".formatted(address, data));
+//        if (data >= 0x20 && data <= 'z')
+//            logger.log(Level.TRACE, "%c".formatted(data));
+//        else
+//            logger.log(Level.TRACE, "");
     }
 
     int lcd_width = 741;
@@ -231,7 +231,8 @@ class Lcd {
         texture = new BufferedImage(lcd_width, lcd_height, BufferedImage.TYPE_INT_BGR);
 
         renderer = new JPanel() {
-            @Override protected void paintComponent(Graphics g) {
+            @Override
+            protected void paintComponent(Graphics g) {
                 super.paintComponent(g);
                 g.drawImage(texture, 0, 0, lcd_width, lcd_height, this);
             }
@@ -256,6 +257,7 @@ logger.log(Level.DEBUG, "%d x %d x %d = %d, %d".formatted(lcd_background[0].leng
 
         init();
 
+        window.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         window.getContentPane().add(renderer);
         window.pack();
         window.setVisible(true);
@@ -273,14 +275,14 @@ logger.log(Level.DEBUG, "%d x %d x %d = %d, %d".formatted(lcd_background[0].leng
 
     void LCD_FontRenderStandard(int x, int y, byte ch, boolean overlay /* = false */) {
         byte[] f;
-        if (ch >= 16)
-            f = lcd_font[ch - 16];
+        if ((ch & 0xff) >= 16)
+            f = lcd_font[(ch & 0xff) - 16];
         else
-            f = Arrays.copyOfRange(LCD_CG, (ch & 7) * 8, lcd_font[0].length); // TODO check
+            f = Arrays.copyOfRange(LCD_CG, (ch & 7) * 8, (ch & 7) * 8 + 8);
         for (int i = 0; i < 7; i++) {
             for (int j = 0; j < 5; j++) {
                 int col;
-                if ((f[i] & (1 << (4 - j))) != 0){
+                if ((f[i] & (1 << (4 - j))) != 0) {
                     col = lcd_col1;
                 } else {
                     col = lcd_col2;
@@ -301,10 +303,10 @@ logger.log(Level.DEBUG, "%d x %d x %d = %d, %d".formatted(lcd_background[0].leng
 
     void LCD_FontRenderLevel(int x, int y, byte ch, byte width /* = 5 */) {
         byte[] f;
-        if (ch >= 16)
-            f = lcd_font[ch - 16];
+        if ((ch & 0xff) >= 16)
+            f = lcd_font[(ch & 0xff) - 16];
         else
-            f = Arrays.copyOfRange(LCD_CG, (ch & 7) * 8, lcd_font[0].length); // TODO check
+            f = Arrays.copyOfRange(LCD_CG, (ch & 7) * 8, (ch & 7) * 8 + 8);
         for (int i = 0; i < 8; i++) {
             for (int j = 0; j < width; j++) {
                 int col;
@@ -362,17 +364,17 @@ logger.log(Level.DEBUG, "%d x %d x %d = %d, %d".formatted(lcd_background[0].leng
 
     void LCD_FontRenderLR(byte ch) {
         byte[] f;
-        if (ch >= 16)
-            f = lcd_font[ch - 16];
+        if ((ch & 0xff) >= 16)
+            f = lcd_font[(ch & 0xff) - 16];
         else
-            f = Arrays.copyOfRange(LCD_CG, (ch & 7) * 8, lcd_font[0].length); // TODO check
+            f = Arrays.copyOfRange(LCD_CG, (ch & 7) * 8, (ch & 7) * 8 + 8);
         int col;
         if ((f[0] & 1) != 0) {
             col = lcd_col1;
         } else {
             col = lcd_col2;
         }
-        for (int f_= 0; f_ < 2; f_++) {
+        for (int f_ = 0; f_ < 2; f_++) {
             for (int i = 0; i < 12; i++) {
                 for (int j = 0; j < 11; j++) {
                     if (LR[f_][i][j])
@@ -396,7 +398,7 @@ logger.log(Level.DEBUG, "%d x %d x %d = %d, %d".formatted(lcd_background[0].leng
                     if (mcu.mcu_jv880) {
                         for (int i = 0; i < lcd_height; i++) {
                             for (int j = 0; j < lcd_width; j++) {
-                                lcd_buffer[i][j] = 0xFF03be51;
+                                lcd_buffer[i][j] = 0xff03be51;
                             }
                         }
                     } else {
@@ -421,35 +423,35 @@ logger.log(Level.DEBUG, "%d x %d x %d = %d, %d".formatted(lcd_background[0].leng
                         if (i < 2 && j < 24 && LCD_C)
                             LCD_FontRenderStandard(4 + i * 50, 4 + j * 34, (byte) '_', true);
                     } else {
-                        for (int i = 0; i < 3; i++) {
+                        for (int i = 0; i < 3; i++) { // left top
                             byte ch = LCD_Data[0 + i];
                             LCD_FontRenderStandard(11, 34 + i * 35, ch, false);
                         }
-                        for (int i = 0; i < 16; i++) {
+                        for (int i = 0; i < 16; i++) { // top: inst number, name
                             byte ch = LCD_Data[3 + i];
                             LCD_FontRenderStandard(11, 153 + i * 35, ch, false);
                         }
-                        for (int i = 0; i < 3; i++) {
+                        for (int i = 0; i < 3; i++) { // level
                             byte ch = LCD_Data[40 + i];
                             LCD_FontRenderStandard(75, 34 + i * 35, ch, false);
                         }
-                        for (int i = 0; i < 3; i++) {
+                        for (int i = 0; i < 3; i++) { // pan
                             byte ch = LCD_Data[43 + i];
                             LCD_FontRenderStandard(75, 153 + i * 35, ch, false);
                         }
-                        for (int i = 0; i < 3; i++) {
+                        for (int i = 0; i < 3; i++) { // reverb
                             byte ch = LCD_Data[49 + i];
                             LCD_FontRenderStandard(139, 34 + i * 35, ch, false);
                         }
-                        for (int i = 0; i < 3; i++) {
+                        for (int i = 0; i < 3; i++) { // chorus
                             byte ch = LCD_Data[46 + i];
                             LCD_FontRenderStandard(139, 153 + i * 35, ch, false);
                         }
-                        for (int i = 0; i < 3; i++) {
+                        for (int i = 0; i < 3; i++) { // k shift
                             byte ch = LCD_Data[52 + i];
                             LCD_FontRenderStandard(203, 34 + i * 35, ch, false);
                         }
-                        for (int i = 0; i < 3; i++) {
+                        for (int i = 0; i < 3; i++) { // midi ch
                             byte ch = LCD_Data[55 + i];
                             LCD_FontRenderStandard(203, 153 + i * 35, ch, false);
                         }
@@ -470,36 +472,40 @@ logger.log(Level.DEBUG, "%d x %d x %d = %d, %d".formatted(lcd_background[0].leng
                 texture.getRaster().setDataElements(0, y, lcd_width, 1, lcd_buffer[y]);
             }
 //logger.log(Level.DEBUG, "LCD_Update");
-            texture.flush();
             renderer.repaint();
         }
     }
 
     void init() {
         window.addWindowListener(new WindowAdapter() {
-            @Override public void windowClosing(WindowEvent e) {
+            @Override
+            public void windowClosing(WindowEvent e) {
                 lcd_quit_requested = true;
 logger.log(Level.DEBUG, "windowClosing");
             }
         });
         window.addKeyListener(new KeyAdapter() {
-            @Override public void keyPressed(KeyEvent e) {
+            boolean held;
+            @Override
+            public void keyPressed(KeyEvent e) {
                 if (e.getKeyCode() == KeyEvent.VK_COMMA)
                     mcu.MCU_EncoderTrigger(0);
                 if (e.getKeyCode() == KeyEvent.VK_PERIOD)
                     mcu.MCU_EncoderTrigger(1);
 
                 process(e, true);
+                held = true;
             }
 
             @Override
             public void keyReleased(KeyEvent e) {
+                held = false;
                 process(e, false);
             }
 
             void process(KeyEvent e, boolean isDown) {
-//                if (e.repeat) // TODO
-//                    return;
+                if (held)
+                    return;
 
                 int mask = 0;
                 int button_pressed = mcu.mcu_button_pressed.get();

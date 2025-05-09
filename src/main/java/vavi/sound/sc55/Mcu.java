@@ -48,7 +48,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.LineUnavailableException;
@@ -83,12 +86,13 @@ import static vavi.sound.sc55.McuInterrupt.Interrupt.INTERRUPT_SOURCE_UART_RX;
 import static vavi.sound.sc55.McuInterrupt.Interrupt.INTERRUPT_SOURCE_UART_TX;
 
 
+/**
+ * system property
+ * <li>{@code sc55.dir} ... rom dir</li>
+ */
 public class Mcu {
 
     private static final Logger logger = getLogger(Mcu.class.getName());
-
-    public void MCU_Interrupt_TRAPA(int i) {
-    }
 
     enum Dev {
         DEV_P1DDR(0x00),
@@ -152,11 +156,19 @@ public class Mcu {
         DEV_RAME(0x79),
         DEV_P1CR(0x7c),
         DEV_P9DDR(0x7e),
-        DEV_P9DR(0x7f);
+        DEV_P9DR(0x7f),
+        DEV_UNDEFINED(-1);
         final int v;
 
         Dev(int v) {
             this.v = v;
+        }
+
+        public static Dev valueOf(int address) {
+            for (Dev dev : Dev.values())
+                if (dev.v == address)
+                    return dev;
+            return DEV_UNDEFINED;
         }
     }
 
@@ -177,62 +189,62 @@ public class Mcu {
     }
 
     enum Vector {
-        VECTOR_RESET,
+        VECTOR_RESET, // 0
         VECTOR_RESERVED1, // UNUSED
         VECTOR_INVALID_INSTRUCTION,
         VECTOR_DIVZERO,
         VECTOR_TRAP,
-        VECTOR_RESERVED2, // UNUSED
+        VECTOR_RESERVED2, // UNUSED, 5
         VECTOR_RESERVED3, // UNUSED
         VECTOR_RESERVED4, // UNUSED
         VECTOR_ADDRESS_ERROR,
         VECTOR_TRACE,
-        VECTOR_RESERVED5, // UNUSED
+        VECTOR_RESERVED5, // UNUSED, 10
         VECTOR_NMI,
         VECTOR_RESERVED6, // UNUSED
         VECTOR_RESERVED7, // UNUSED
         VECTOR_RESERVED8, // UNUSED
-        VECTOR_RESERVED9, // UNUSED
+        VECTOR_RESERVED9, // UNUSED, 15
         VECTOR_TRAPA_0,
         VECTOR_TRAPA_1,
         VECTOR_TRAPA_2,
         VECTOR_TRAPA_3,
-        VECTOR_TRAPA_4,
+        VECTOR_TRAPA_4, // 20
         VECTOR_TRAPA_5,
         VECTOR_TRAPA_6,
         VECTOR_TRAPA_7,
         VECTOR_TRAPA_8,
-        VECTOR_TRAPA_9,
+        VECTOR_TRAPA_9, // 25
         VECTOR_TRAPA_A,
         VECTOR_TRAPA_B,
         VECTOR_TRAPA_C,
         VECTOR_TRAPA_D,
-        VECTOR_TRAPA_E,
+        VECTOR_TRAPA_E, // 30
         VECTOR_TRAPA_F,
         VECTOR_IRQ0,
         VECTOR_IRQ1,
         VECTOR_INTERNAL_INTERRUPT_88, // UNUSED
-        VECTOR_INTERNAL_INTERRUPT_8C, // UNUSED
+        VECTOR_INTERNAL_INTERRUPT_8C, // UNUSED, 35
         VECTOR_INTERNAL_INTERRUPT_90, // FRT1 ICI
         VECTOR_INTERNAL_INTERRUPT_94, // FRT1 OCIA
         VECTOR_INTERNAL_INTERRUPT_98, // FRT1 OCIB
         VECTOR_INTERNAL_INTERRUPT_9C, // FRT1 FOVI
-        VECTOR_INTERNAL_INTERRUPT_A0, // FRT2 ICI
+        VECTOR_INTERNAL_INTERRUPT_A0, // FRT2 ICI, 40
         VECTOR_INTERNAL_INTERRUPT_A4, // FRT2 OCIA
         VECTOR_INTERNAL_INTERRUPT_A8, // FRT2 OCIB
         VECTOR_INTERNAL_INTERRUPT_AC, // FRT2 FOVI
         VECTOR_INTERNAL_INTERRUPT_B0, // FRT3 ICI
-        VECTOR_INTERNAL_INTERRUPT_B4, // FRT3 OCIA
+        VECTOR_INTERNAL_INTERRUPT_B4, // FRT3 OCIA, 45
         VECTOR_INTERNAL_INTERRUPT_B8, // FRT3 OCIB
         VECTOR_INTERNAL_INTERRUPT_BC, // FRT3 FOVI
         VECTOR_INTERNAL_INTERRUPT_C0, // CMIA
         VECTOR_INTERNAL_INTERRUPT_C4, // CMIB
-        VECTOR_INTERNAL_INTERRUPT_C8, // OVI
+        VECTOR_INTERNAL_INTERRUPT_C8, // OVI, 50
         VECTOR_INTERNAL_INTERRUPT_CC, // UNUSED
         VECTOR_INTERNAL_INTERRUPT_D0, // ERI
         VECTOR_INTERNAL_INTERRUPT_D4, // RXI
         VECTOR_INTERNAL_INTERRUPT_D8, // TXI
-        VECTOR_INTERNAL_INTERRUPT_DC, // UNUSED
+        VECTOR_INTERNAL_INTERRUPT_DC, // UNUSED, 55
         VECTOR_INTERNAL_INTERRUPT_E0 // ADI
     }
 
@@ -269,7 +281,7 @@ public class Mcu {
     }
 
     int MCU_GetAddress(byte page, short address) {
-        return (page << 16) + address;
+        return ((page & 0xff) << 16) + (address & 0xffff);
     }
 
     private byte MCU_ReadCode() {
@@ -283,7 +295,7 @@ public class Mcu {
     }
 
     private void MCU_SetRegisterByte(byte reg, byte val) {
-        this.r[reg] = val;
+        this.r[reg & 0xff] = (short) (val & 0xff);
     }
 
     int MCU_GetVectorAddress(int vector) {
@@ -337,11 +349,11 @@ public class Mcu {
             if (reg == 0) {
                 ret = this.sr & sr_mask;
             } else if (reg == 5) { // FIXME: undocumented
-                ret = this.dp | (this.dp << 8);
+                ret = (this.dp & 0xff) | ((this.dp & 0xff) << 8);
             } else if (reg == 4) { // FIXME: undocumented
-                ret = this.ep | (this.ep << 8);
+                ret = (this.ep & 0xff) | ((this.ep & 0xff) << 8);
             } else if (reg == 3) { // FIXME: undocumented
-                ret = this.br | (this.br << 8);
+                ret = (this.br & 0xff) | ((this.br & 0xff) << 8);
             } else {
                 MCU_ErrorTrap();
             }
@@ -350,13 +362,13 @@ public class Mcu {
             if (reg == 1) {
                 ret = this.sr & sr_mask;
             } else if (reg == 3) {
-                ret = this.br;
+                ret = this.br & 0xff;
             } else if (reg == 4) {
-                ret = this.ep;
+                ret = this.ep & 0xff;
             } else if (reg == 5) {
-                ret = this.dp;
+                ret = this.dp & 0xff;
             } else if (reg == 7) {
-                ret = this.tp;
+                ret = this.tp & 0xff;
             } else {
                 MCU_ErrorTrap();
             }
@@ -376,14 +388,14 @@ public class Mcu {
         if ((this.r[7] & 1) != 0)
             interrupt.MCU_Interrupt_Exception(EXCEPTION_SOURCE_ADDRESS_ERROR.ordinal());
         this.r[7] -= 2;
-        MCU_Write16(this.r[7], data);
+        MCU_Write16(this.r[7] & 0xffff, data);
     }
 
     short MCU_PopStack() {
         short ret;
         if ((this.r[7] & 1) != 0)
             interrupt.MCU_Interrupt_Exception(EXCEPTION_SOURCE_ADDRESS_ERROR.ordinal());
-        ret = MCU_Read16(this.r[7]);
+        ret = MCU_Read16(this.r[7] & 0xffff);
         this.r[7] += 2;
         return ret;
     }
@@ -573,7 +585,7 @@ public class Mcu {
     private SourceDataLine audioOut;
 
     void MCU_ErrorTrap() {
-        logger.log(Level.DEBUG, "%2x %4x".formatted(this.cp, this.pc));
+        logger.log(Level.DEBUG, "cp: %2x pc: %4x".formatted(this.cp, this.pc), new Exception("MCU_ErrorTrap"));
     }
 
     boolean mcu_mk1 = false; // 0 - SC-55mkII, SC-55ST. 1 - SC-55, CM-300/SCC-1
@@ -691,7 +703,7 @@ READ_RCU:
     }
 
     void MCU_AnalogSample(int channel) {
-        int value = MCU_AnalogReadPin(channel);
+        int value = MCU_AnalogReadPin(channel) & 0xffff;
         int dest = (channel << 1) & 6;
         dev_register[DEV_ADDRAH.v + dest] = (byte) (value >> 2);
         dev_register[DEV_ADDRAL.v + dest] = (byte) ((value << 6) & 0xc0);
@@ -721,7 +733,7 @@ READ_RCU:
             timer.TIMER2_Write(address, data);
             return;
         }
-        switch (Dev.values()[address]) {
+        switch (Dev.valueOf(address)) {
             case DEV_P1DDR: // P1DDR
                 break;
             case DEV_P5DDR:
@@ -829,7 +841,7 @@ READ_RCU:
         if (address >= 0x50 && address < 0x55) {
             return timer.TIMER_Read2(address);
         }
-        switch (Dev.values()[address]) {
+        switch (Dev.valueOf(address)) {
             case DEV_ADDRAH:
             case DEV_ADDRAL:
             case DEV_ADDRBH:
@@ -855,14 +867,14 @@ READ_RCU:
                 byte data = (byte) 0xff;
                 int button_pressed = mcu_button_pressed.get();
 
-                if (io_sd == 0b1111_1011)
-                    data &= (byte) (((button_pressed >> 0) & 0b1_1111) ^ 0xFF);
-                if (io_sd == 0b1111_0111)
-                    data &= (byte) (((button_pressed >> 5) & 0b1_1111) ^ 0xFF);
-                if (io_sd == 0b1110_1111)
-                    data &= (byte) (((button_pressed >> 10) & 0b1111) ^ 0xFF);
+                if (io_sd == (byte) 0b1111_1011)
+                    data &= (byte) (((button_pressed >>> 0) & 0b1_1111) ^ 0xFF);
+                if (io_sd == (byte) 0b1111_0111)
+                    data &= (byte) (((button_pressed >>> 5) & 0b1_1111) ^ 0xFF);
+                if (io_sd == (byte) 0b1110_1111)
+                    data &= (byte) (((button_pressed >>> 10) & 0b1111) ^ 0xFF);
 
-                data |= 0b1000_0000;
+                data |= (byte) 0b1000_0000;
                 return data;
             }
             case DEV_P9DR: {
@@ -905,7 +917,7 @@ READ_RCU:
     }
 
     void MCU_UpdateAnalog(long cycles) {
-        int ctrl = dev_register[Dev.DEV_ADCSR.v];
+        int ctrl = dev_register[Dev.DEV_ADCSR.v] & 0xff;
         boolean isscan = (ctrl & 16) != 0;
 
         if ((ctrl & 0x20) != 0) {
@@ -932,10 +944,10 @@ READ_RCU:
 
     byte[] rom1;
     byte[] rom2;
-    byte[] ram;
-    byte[] sram;
-    byte[] nvram;
-    byte[] cardram;
+    byte[] ram = new byte[RAM_SIZE];
+    byte[] sram = new byte[SRAM_SIZE];
+    byte[] nvram = new byte[NVRAM_SIZE];
+    byte[] cardram = new byte[CARDRAM_SIZE];
 
     int rom2_mask = ROM2_SIZE - 1;
 
@@ -944,6 +956,7 @@ READ_RCU:
         if ((address & 0x8_0000) != 0 && !mcu_jv880)
             address_rom |= 0x4_0000;
         byte page = (byte) ((address >> 16) & 0xf);
+if (CC == 800) { System.err.printf("address: %08x, address_rom: %04x, rom2_mask: %04x, page: %02x%n", address, address_rom, rom2_mask, page); }
         address &= 0xffff;
         byte ret = (byte) 0xff;
         switch (page) {
@@ -952,7 +965,7 @@ READ_RCU:
                     ret = rom1[address & 0x7fff];
                 else {
                     if (!mcu_mk1) {
-                        short base = (short) (mcu_jv880 ? 0xf000 : 0xe000);
+                        int base = mcu_jv880 ? 0xf000 : 0xe000;
                         if (address >= base && address < (base | 0x400)) {
                             ret = pcm.PCM_Read(address & 0x3f);
                         } else if (!mcu_scb55 && address >= 0xec00 && address < 0xf000) {
@@ -969,7 +982,7 @@ READ_RCU:
                             ga_int_trigger = 0;
                             interrupt.MCU_Interrupt_SetRequest(mcu_jv880 ? INTERRUPT_SOURCE_IRQ0.ordinal() : INTERRUPT_SOURCE_IRQ1.ordinal(), false);
                         } else {
-                            logger.log(Level.DEBUG, "Unknown read %x".formatted(address));
+                            logger.log(Level.TRACE, "Unknown read %x".formatted(address));
                             ret = (byte) 0xff;
                         }
                         //
@@ -997,13 +1010,13 @@ READ_RCU:
                             int button_pressed = mcu_button_pressed.get();
 
                             if ((io_sd & 1) == 0)
-                                data &= (byte) (((button_pressed >> 0) & 255) ^ 255);
+                                data &= (byte) (((button_pressed >>> 0) & 255) ^ 255);
                             if ((io_sd & 2) == 0)
-                                data &= (byte) (((button_pressed >> 8) & 255) ^ 255);
+                                data &= (byte) (((button_pressed >>> 8) & 255) ^ 255);
                             if ((io_sd & 4) == 0)
-                                data &= (byte) (((button_pressed >> 16) & 255) ^ 255);
+                                data &= (byte) (((button_pressed >>> 16) & 255) ^ 255);
                             if ((io_sd & 8) == 0)
-                                data &= (byte) (((button_pressed >> 24) & 255) ^ 255);
+                                data &= (byte) (((button_pressed >>> 24) & 255) ^ 255);
                             return data;
                         } else if (address == 0xf106) {
                             ret = (byte) ga_int_trigger;
@@ -1096,7 +1109,7 @@ READ_RCU:
         byte b0, b1;
         b0 = MCU_Read(address);
         b1 = MCU_Read(address + 1);
-        return (short) ((b0 << 8) + b1);
+        return (short) (((b0 & 0xff) << 8) + (b1 & 0xff));
     }
 
     int MCU_Read32(int address) {
@@ -1106,11 +1119,11 @@ READ_RCU:
         b1 = MCU_Read(address + 1);
         b2 = MCU_Read(address + 2);
         b3 = MCU_Read(address + 3);
-        return (b0 << 24) + (b1 << 16) + (b2 << 8) + b3;
+        return ((b0 & 0xff) << 24) + ((b1 & 0xff) << 16) + ((b2 & 0xff) << 8) + (b3 & 0xff);
     }
 
     void MCU_Write(int address, byte value) {
-        byte page = (byte) ((address >> 16) & 0xf);
+        int page = (address >> 16) & 0xf;
         address &= 0xffff;
         if (page == 0) {
             if ((address & 0x8000) != 0) {
@@ -1123,7 +1136,7 @@ READ_RCU:
                             io_sd = value;
                             lcd.LCD_Enable((value & 1) == 0);
                         } else if (address == (base | 0x402))
-                            ga_int_enable = (value << 1);
+                            ga_int_enable = (value & 0xff) << 1;
                         else
                             logger.log(Level.DEBUG, "Unknown write %x %x".formatted(address, value));
                         //
@@ -1189,7 +1202,7 @@ READ_RCU:
         } else if (page == 14 && mcu_jv880) {
             cardram[address & 0x7fff] = value; // FIXME
         } else {
-            logger.log(Level.DEBUG, "Unknown write %x %x".formatted((page << 16) | address, value));
+            logger.log(Level.DEBUG, "Unknown write %x %x".formatted(((page & 0xff) << 16) | address, value));
         }
     }
 
@@ -1199,10 +1212,13 @@ READ_RCU:
         MCU_Write(address + 1, (byte) (value & 0xff));
     }
 
+int CC = 0;
     void MCU_ReadInstruction() {
         byte operand = MCU_ReadCodeAdvance();
 
-        opcodes.MCU_Operand_Table[operand].accept(operand);
+//System.err.printf("%10d pc: %04x, oprand: %02x, sr: %04x%n", CC++, (pc - 1) & 0xffff, operand & 0xff, sr & 0xffff);
+//if (CC > 100000) { System.exit(1); }
+        opcodes.MCU_Operand_Table[operand & 0xff].accept(operand);
 
         if ((this.sr & Status.STATUS_T.v) != 0) {
             interrupt.MCU_Interrupt_Exception(EXCEPTION_SOURCE_TRACE.ordinal());
@@ -1247,6 +1263,7 @@ READ_RCU:
 
     public void MCU_PostUART(byte data) {
         uart_buffer[uart_write_ptr] = data;
+logger.log(Level.DEBUG, "%02x, %d".formatted(data & 0xff, uart_write_ptr));
         uart_write_ptr = (uart_write_ptr + 1) % uart_buffer_size;
     }
 
@@ -1282,69 +1299,84 @@ READ_RCU:
         dev_register[DEV_SSR.v] |= (byte) 0x80;
         interrupt.MCU_Interrupt_SetRequest(INTERRUPT_SOURCE_UART_TX.ordinal(), (dev_register[Dev.DEV_SCR.v] & 0x80) != 0);
 
-        // SYstem.err.printf("tx:%x\n", dev_register[DEV_TDR]);
+//        logger.log(Level.TRACE, "tx:%x\n", dev_register[DEV_TDR]);
     }
 
     private boolean work_thread_run = false;
 
-    final Object work_thread_lock = new Object();
+    final ReentrantLock work_thread_lock = new ReentrantLock();
+
+    void MCU_WorkThread_Lock() {
+        work_thread_lock.lock();
+logger.log(Level.TRACE, "mutex lock");
+    }
+
+    void MCU_WorkThread_Unlock() {
+        work_thread_lock.unlock();
+logger.log(Level.TRACE, "mutex unlock");
+    }
 
     void work_thread() {
-logger.log(Level.DEBUG, "task start");
-//        synchronized (work_thread_lock) {
+logger.log(Level.DEBUG, "task start: ex_ignore: " + ex_ignore + ", sleep: " + sleep);
+try {
+        MCU_WorkThread_Lock();
 
-            while (work_thread_run) {
-                if ((pcm.config_reg_3c & 0x40) != 0)
-                    sample_write_ptr &= ~3;
-                else
-                    sample_write_ptr &= ~1;
-                if (sample_read_ptr == sample_write_ptr) {
-//                    MCU_WorkThread_Unlock();
-                    while (sample_read_ptr == sample_write_ptr) {
-                        try { Thread.sleep(1); } catch (InterruptedException ignored) {}
-                    }
-//                    MCU_WorkThread_Lock();
+        while (work_thread_run) {
+            if ((pcm.config_reg_3c & 0x40) != 0)
+                sample_write_ptr &= ~3;
+            else
+                sample_write_ptr &= ~1;
+            if (sample_read_ptr == sample_write_ptr) {
+                MCU_WorkThread_Unlock();
+                while (sample_read_ptr == sample_write_ptr) {
+                    try { Thread.sleep(1); } catch (InterruptedException ignored) {}
                 }
+                MCU_WorkThread_Lock();
+            }
 
-                if (!this.ex_ignore)
-                    interrupt.MCU_Interrupt_Handle();
-                else
-                    this.ex_ignore = false;
+            if (!this.ex_ignore)
+                interrupt.MCU_Interrupt_Handle();
+            else
+                this.ex_ignore = false;
 
-                if (!this.sleep)
-                    MCU_ReadInstruction();
+            if (!this.sleep)
+                MCU_ReadInstruction();
 
-                this.cycles += 12; // FIXME: assume 12 cycles per instruction
+            this.cycles += 12; // FIXME: assume 12 cycles per instruction
 
-                // if (this.cycles % 24000000 == 0)
-                //     logger.log(Level.TRACE, "seconds: %d".formatted((int)(this.cycles / 24000000)));
+            // if (this.cycles % 24000000 == 0)
+            //     logger.log(Level.TRACE, "seconds: %d".formatted((int)(this.cycles / 24000000)));
 
-                pcm.PCM_Update(this.cycles);
+            pcm.PCM_Update(this.cycles);
 
-                timer.TIMER_Clock(this.cycles);
+            timer.TIMER_Clock(this.cycles);
 
-                if (!mcu_mk1 && !mcu_jv880 && !mcu_scb55)
-                    sm.SM_Update(this.cycles);
-                else {
-                    MCU_UpdateUART_RX();
-                    MCU_UpdateUART_TX();
-                }
+            if (!mcu_mk1 && !mcu_jv880 && !mcu_scb55)
+                sm.SM_Update(this.cycles);
+            else {
+                MCU_UpdateUART_RX();
+                MCU_UpdateUART_TX();
+            }
 
-                MCU_UpdateAnalog(this.cycles);
+            MCU_UpdateAnalog(this.cycles);
 
-                if (mcu_mk1) {
-                    if (ga_lcd_counter != 0) {
-                        ga_lcd_counter--;
-                        if (ga_lcd_counter == 0) {
-                            MCU_GA_SetGAInt(1, false);
-                            MCU_GA_SetGAInt(1, true);
-                        }
+            if (mcu_mk1) {
+                if (ga_lcd_counter != 0) {
+                    ga_lcd_counter--;
+                    if (ga_lcd_counter == 0) {
+                        MCU_GA_SetGAInt(1, false);
+                        MCU_GA_SetGAInt(1, true);
                     }
                 }
             }
-//            MCU_WorkThread_Unlock();
-//        }
+        }
+
+        MCU_WorkThread_Unlock();
 logger.log(Level.DEBUG, "task end");
+} catch (Throwable t) {
+ logger.log(Level.ERROR, t.getMessage(), t);
+ throw t;
+}
     }
 
     private void MCU_Run() {
@@ -1352,7 +1384,6 @@ logger.log(Level.DEBUG, "task end");
             boolean working = true;
 
             work_thread_run = true;
-            ExecutorService es = Executors.newSingleThreadExecutor();
             es.submit(this::work_thread); // , "work thread"
 logger.log(Level.DEBUG, "thread start");
 
@@ -1372,6 +1403,9 @@ logger.log(Level.DEBUG, "working is false");
 logger.log(Level.DEBUG, "thread end");
 
         } catch (InterruptedException ignoree) {
+} catch (Throwable t) {
+ logger.log(Level.ERROR, t.getMessage(), t);
+ throw t;
         }
     }
 
@@ -1393,13 +1427,13 @@ logger.log(Level.DEBUG, "thread end");
         int button_pressed = mcu_button_pressed.get();
 
         if ((mcu_p0_data & 1) == 0)
-            data &= (byte) (((button_pressed >> 0) & 255) ^ 255);
+            data &= (byte) (((button_pressed >>> 0) & 255) ^ 255);
         if ((mcu_p0_data & 2) == 0)
-            data &= (byte) (((button_pressed >> 8) & 255) ^ 255);
+            data &= (byte) (((button_pressed >>> 8) & 255) ^ 255);
         if ((mcu_p0_data & 4) == 0)
-            data &= (byte) (((button_pressed >> 16) & 255) ^ 255);
+            data &= (byte) (((button_pressed >>> 16) & 255) ^ 255);
         if ((mcu_p0_data & 8) == 0)
-            data &= (byte) (((button_pressed >> 24) & 255) ^ 255);
+            data &= (byte) (((button_pressed >>> 24) & 255) ^ 255);
 
         return data;
     }
@@ -1417,14 +1451,14 @@ logger.log(Level.DEBUG, "thread end");
     void unscramble(byte[] src, byte[] dst, int len) {
         for (int i = 0; i < len; i++) {
             int address = i & ~0xfffff;
-            final int[] aa = {2, 0, 3, 4, 1, 9, 13, 10, 18, 17, 6, 15, 11, 16, 8, 5, 12, 7, 14, 19};
+            int[] aa = {2, 0, 3, 4, 1, 9, 13, 10, 18, 17, 6, 15, 11, 16, 8, 5, 12, 7, 14, 19};
             for (int j = 0; j < 20; j++) {
                 if ((i & (1 << j)) != 0)
                     address |= 1 << aa[j];
             }
             byte srcdata = src[address];
             byte data = 0;
-            final int[] dd = {2, 0, 4, 5, 7, 6, 3, 1};
+            int[] dd = {2, 0, 4, 5, 7, 6, 3, 1};
             for (int j = 0; j < 8; j++) {
                 if ((srcdata & (1 << dd[j])) != 0)
                     data |= (byte) (1 << j);
@@ -1434,14 +1468,31 @@ logger.log(Level.DEBUG, "thread end");
     }
 
     public void audio_output() {
-        if (audioOut == null) return;
+try {
         int len = Math.min(1024, audio_buffer_size - sample_read_ptr);
         ByteBuffer bb = ByteBuffer.allocate(len * Short.BYTES).order(ByteOrder.LITTLE_ENDIAN);
         ShortBuffer sb = bb.asShortBuffer();
         sb.get(sample_buffer, sample_read_ptr, len);
+//logger.log(Level.DEBUG, "audio_buffer_size: %d, sample_read_ptr: %d, audio output: %d".formatted(audio_buffer_size, sample_read_ptr, len));
         audioOut.write(bb.array(), 0, len * Short.BYTES);
         sample_read_ptr += len;
+        sample_read_ptr %= audio_buffer_size;
+} catch (Throwable t) {
+ logger.log(Level.ERROR, t.getMessage(), t);
+}
     }
+
+    private final ExecutorService es = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r);
+        thread.setPriority(Thread.MIN_PRIORITY);
+        return thread;
+    });
+
+    private final ScheduledExecutorService ses = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread thread = new Thread(r);
+        thread.setPriority(Thread.MIN_PRIORITY);
+        return thread;
+    });
 
     int MCU_OpenAudio(int deviceIndex, int pageSize, int pageNum) {
 
@@ -1472,18 +1523,21 @@ logger.log(Level.DEBUG, "audio_buffer_size: " + audio_buffer_size);
             return 0;
         }
 
-        logger.log(Level.DEBUG, "Audio device: " + audioDevicename);
+        logger.log(Level.INFO, "Audio device: " + audioDevicename);
 
-        logger.log(Level.DEBUG, "Audio Requested: F=%s, C=%d, R=%d, B=%d".formatted(
+        logger.log(Level.INFO, "Audio Actual: F=%s, C=%d, R=%d, B=%d".formatted(
                 spec.getEncoding(),
                 spec.getChannels(),
                 (int) spec.getSampleRate(),
                 spec.getSampleSizeInBits()));
 
+        ses.scheduleAtFixedRate(this::audio_output, 0, 12, TimeUnit.MILLISECONDS);
+
         return 1;
     }
 
     void MCU_CloseAudio() {
+        ses.shutdown();
         audioOut.close();
     }
 
@@ -1549,8 +1603,8 @@ logger.log(Level.DEBUG, "audio_buffer_size: " + audio_buffer_size);
     }
 
     void MIDI_Reset(ResetType resetType) {
-        final byte[] gmReset = {(byte) 0xF0, 0x7E, 0x7F, 0x09, 0x01, (byte) 0xF7};
-        final byte[] gsReset = {(byte) 0xF0, 0x41, 0x10, 0x42, 0x12, 0x40, 0x00, 0x7F, 0x00, 0x41, (byte) 0xF7};
+        byte[] gmReset = {(byte) 0xF0, 0x7E, 0x7F, 0x09, 0x01, (byte) 0xF7};
+        byte[] gsReset = {(byte) 0xF0, 0x41, 0x10, 0x42, 0x12, 0x40, 0x00, 0x7F, 0x00, 0x41, (byte) 0xF7};
 
         if (resetType == ResetType.GS_RESET) {
             for (byte b : gsReset) {

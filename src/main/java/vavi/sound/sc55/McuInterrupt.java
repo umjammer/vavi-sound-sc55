@@ -108,7 +108,7 @@ class McuInterrupt {
 
     void MCU_Interrupt_Start(int mask) {
         mcu.MCU_PushStack(mcu.pc);
-        mcu.MCU_PushStack(mcu.cp);
+        mcu.MCU_PushStack((short) (mcu.cp & 0xff));
         mcu.MCU_PushStack(mcu.sr);
         mcu.sr &= (short) ~STATUS_T.v;
         if (mask >= 0) {
@@ -119,6 +119,7 @@ class McuInterrupt {
     }
 
     void MCU_Interrupt_SetRequest(int interrupt, boolean value) {
+//if (interrupt == 12) { System.err.printf("%d: interrupt: %x, value: %s%n", mcu.CC - 1, interrupt, value); }
         mcu.interrupt_pending[interrupt] = value;
     }
 
@@ -133,11 +134,13 @@ class McuInterrupt {
     }
 
     void MCU_Interrupt_TRAPA(int vector) {
+//{ System.err.printf("%d: vector: %x%n", mcu.CC - 1, vector); }
         mcu.trapa_pending[vector] = 1;
     }
 
     void MCU_Interrupt_StartVector(int vector, int mask) {
         int address = mcu.MCU_GetVectorAddress(vector);
+//if (mcu.CC >= 57540) { System.err.printf("address: %x, vector: %x, mask: %x%n", address, vector, mask); }
         MCU_Interrupt_Start(mask);
         mcu.cp = (byte) (address >> 16);
         mcu.pc = (short) address;

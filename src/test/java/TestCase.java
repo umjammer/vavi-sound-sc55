@@ -31,9 +31,10 @@ import vavi.util.properties.annotation.PropsEntity.Util;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIf;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import static vavi.sound.midi.MidiUtil.getMidiDevice;
+import static vavi.sound.sc55.LcdFont.lcd_font;
 
 
 /**
@@ -101,12 +102,30 @@ Debug.println("volume: " + volume + ", sc55.dir: " + System.getProperty("sc55.di
     }
 
     @Test
+    @EnabledIfSystemProperty(named = "vavi.test", matches = "ide")
+    void test01() throws Exception {
+        int c = 0;
+        for (byte[] f : lcd_font) {
+            System.out.println("font: " + c++);
+            for (int i = 0; i < 7; i++) {
+                for (int j = 0; j < 5; j++) {
+                    boolean col = (f[i] & (1 << (4 - j))) != 0;
+                    System.out.print(col ? "⬛️" : "⬜️");
+                }
+                System.out.println();
+            }
+        }
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "vavi.test", matches = "ide")
     void test1() throws Exception {
         Mcu.main(new String[] {});
     }
 
     @Test
     @DisplayName("connect specified input device to the synthesizer")
+    @EnabledIfSystemProperty(named = "vavi.test", matches = "ide")
     void test2() throws Exception {
 
         Info info = getMidiDevice(new MidiMatcher(inName, inVendor, inDescription, null), true);

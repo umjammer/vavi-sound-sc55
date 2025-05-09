@@ -34,10 +34,16 @@
 
 package vavi.sound.sc55;
 
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
+
+import static java.lang.System.getLogger;
 import static vavi.sound.sc55.McuInterrupt.Interrupt.INTERRUPT_SOURCE_IRQ0;
 
 
 class Pcm {
+
+    private static final Logger logger = getLogger(Pcm.class.getName());
 
 //    static class pcm_t {
 
@@ -117,8 +123,7 @@ class Pcm {
 
     void PCM_Write(int address, byte data) {
         address &= 0x3f;
-        if (address < 0x4) // voice enable
-        {
+        if (address < 0x4) { // voice enable
             switch (address & 3) {
                 case 0:
                     this.voice_mask_pending &= ~0xf000000;
@@ -212,14 +217,13 @@ class Pcm {
     // ch: [31][2], [31][5]
     byte PCM_Read(int address) {
         address &= 0x3f;
-        //logger.log(Level.TRACE, "PCM Read: %2x".formatted(address));
+//        logger.log(Level.DEBUG, "PCM Read: %2x, read_latch: %x".formatted(address, read_latch));
 
         if (address < 0x4) {
             if (this.voice_mask_updating != 0)
                 this.voice_mask = this.voice_mask_pending;
             this.voice_mask_updating = 0;
-        } else if (address == 0x3c || address == 0x3e) // status
-        {
+        } else if (address == 0x3c || address == 0x3e) { // status
             byte status = 0;
             if (address == 0x3e && this.irq_assert != 0) {
                 this.irq_assert = 0;
@@ -229,7 +233,7 @@ class Pcm {
                     mcu.interrupt.MCU_Interrupt_SetRequest(INTERRUPT_SOURCE_IRQ0.ordinal(), false);
             }
 
-            status |= this.irq_channel;
+            status |= (byte) this.irq_channel;
             if (this.voice_mask_updating != 0)
                 status |= 32;
 
@@ -273,30 +277,30 @@ class Pcm {
     void PCM_Reset() {
     }
 
-    private final int addclip20(int add1, int add2, int cin) {
-        int sum = (add1 + add2 + cin) & 0xfffff;
-        if ((add1 & 0x80000) != 0 && (add2 & 0x80000) != 0 && (sum & 0x80000) == 0)
-            sum = 0x80000;
-        else if ((add1 & 0x80000) == 0 && (add2 & 0x80000) == 0 && (sum & 0x80000) != 0)
-            sum = 0x7ffff;
+    private int addclip20(int add1, int add2, int cin) {
+        int sum = (add1 + add2 + cin) & 0xf_ffff;
+        if ((add1 & 0x8_0000) != 0 && (add2 & 0x8_0000) != 0 && (sum & 0x8_0000) == 0)
+            sum = 0x8_0000;
+        else if ((add1 & 0x8_0000) == 0 && (add2 & 0x8_0000) == 0 && (sum & 0x8_0000) != 0)
+            sum = 0x7_ffff;
         return sum;
     }
 
-    private final int multi(int val1, byte val2) {
-        if ((val1 & 0x80000) != 0)
-            val1 |= ~0xfffff;
+    private int multi(int val1, byte val2) {
+        if ((val1 & 0x8_0000) != 0)
+            val1 |= ~0xf_ffff;
         else
-            val1 &= 0x7ffff;
+            val1 &= 0x7_ffff;
 
         val1 *= val2;
-        if ((val1 & 0x8000000) != 0)
-            val1 |= ~0x1ffffff;
+        if ((val1 & 0x800_0000) != 0)
+            val1 |= ~0x1ff_ffff;
         else
-            val1 &= 0x1ffffff;
+            val1 &= 0x1ff_ffff;
         return val1;
     }
 
-    private final int[][] interp_lut = {
+    private static final int[][] interp_lut = {
             {
                     3385, 3401, 3417, 3432, 3448, 3463, 3478, 3492, 3506, 3521, 3534, 3548, 3562, 3575, 3588, 3601,
                     3614, 3626, 3638, 3650, 3662, 3673, 3685, 3696, 3707, 3718, 3728, 3739, 3749, 3759, 3768, 3778,
@@ -329,7 +333,7 @@ class Pcm {
             }
     };
 
-    private final void calc_tv(int e, int adjust, short[] levelcur, int lp, boolean active, int[] volmul) {
+    private void calc_tv(int e, int adjust, short[] levelcur, int lp, boolean active, int[] volmul) {
         // int adjust = ram2[3+e];
         // int levelcur = ram2[9+e] & 0x7fff;
         levelcur[lp] &= 0x7fff;
@@ -417,7 +421,7 @@ class Pcm {
             int sum1 = (target << 11); // 5
             if (e != 2 || active)
                 sum1 -= (levelcur[lp] << 4); // 6
-            int neg = (sum1 & 0x80000) != 0 ? 1 : 0;
+            int neg = (sum1 & 0x8_0000) != 0 ? 1 : 0;
 
             int preshift = sum1;
 
@@ -441,7 +445,7 @@ class Pcm {
             int sum1 = target << 11; // 5
             if (e != 2 || active)
                 sum1 -= (levelcur[lp] << 4); // 6
-            int neg = (sum1 & 0x80000) != 0 ? 1 : 0;
+            int neg = (sum1 & 0x8_0000) != 0 ? 1 : 0;
             int preshift = (speed & 15) << 9;
             if (w1 == 0)
                 preshift |= 0x2000;
@@ -457,7 +461,7 @@ class Pcm {
 
             int sum3 = (target << 11) - (sum2_l << 4);
 
-            int neg2 = (sum3 & 0x80000) != 0 ? 1 : 0;
+            int neg2 = (sum3 & 0x8_0000) != 0 ? 1 : 0;
             int xnor = (neg2 ^ neg) == 0 ? 1 : 0;
 
             if (write && this.nfs != 0) {
@@ -566,7 +570,7 @@ class Pcm {
                 if ((this.config_reg_3c & 0x30) == 0x30)
                     orval |= 1 << 12;
 
-                int shifter = this.ram2[30][10];
+                int shifter = this.ram2[30][10] & 0xffff;
                 int xr = ((shifter >> 0) ^ (shifter >> 1) ^ (shifter >> 7) ^ (shifter >> 12)) & 1;
                 shifter = (shifter >> 1) | (xr << 15);
                 this.ram2[30][10] = (short) shifter;
@@ -584,8 +588,8 @@ class Pcm {
                 this.ram1[30][1] = this.accum_r & write_mask;
 
 
-                tt[0] = (int) ((this.ram1[30][2] & ~write_mask) << 12);
-                tt[1] = (int) ((this.ram1[30][4] & ~write_mask) << 12);
+                tt[0] = (this.ram1[30][2] & ~write_mask) << 12;
+                tt[1] = (this.ram1[30][4] & ~write_mask) << 12;
 
                 mcu.MCU_PostSample(tt);
 
@@ -601,16 +605,15 @@ class Pcm {
                 this.ram1[30][5] = addclip20(this.accum_r,
                         orval | (shifter & noise_mask), 0);
 
-                if ((this.config_reg_3c & 0x40) != 0) // oversampling
-                {
+                if ((this.config_reg_3c & 0x40) != 0) { // oversampling
                     this.ram2[30][10] = (short) shifter;
 
                     this.ram1[30][0] = this.accum_l & write_mask;
                     this.ram1[30][1] = this.accum_r & write_mask;
 
 
-                    tt[0] = (int) ((this.ram1[30][3] & ~write_mask) << 12);
-                    tt[1] = (int) ((this.ram1[30][5] & ~write_mask) << 12);
+                    tt[0] = (this.ram1[30][3] & ~write_mask) << 12;
+                    tt[1] = (this.ram1[30][5] & ~write_mask) << 12;
 
                     mcu.MCU_PostSample(tt);
                 }
@@ -618,7 +621,7 @@ class Pcm {
 
             { // global counter for envelopes
                 if (this.nfs == 0)
-                    this.tv_counter = this.ram2[31][8]; // fixme
+                    this.tv_counter = this.ram2[31][8] & 0xffff; // fixme
 
                 this.tv_counter -= 1;
 
@@ -640,7 +643,7 @@ class Pcm {
             }
 
             {
-                int v1 = this.ram2[31][1];
+                int v1 = this.ram2[31][1] & 0xffff;
 
                 int m1 = multi(this.ram1[29][1], (byte) (v1 >> 8)) >> 5; // 14
                 int m2 = multi(this.rcsum[1], (byte) (v1 & 255)) >> 5; // 15
@@ -653,11 +656,11 @@ class Pcm {
                 boolean key = true;
                 boolean active = okey && key;
                 int[] u = new int[1];
-                calc_tv(1, this.ram2[30][0], this.ram2[30], 9, active, u);
+                calc_tv(1, this.ram2[30][0] & 0xffff, this.ram2[30], 9, active, u);
             }
 
             {
-                int v1 = this.ram2[30][1];
+                int v1 = this.ram2[30][1] & 0xffff;
                 int m1 = multi(this.ram1[29][0], (byte) (v1 >> 8)) >> 5; // 17
                 int m2 = multi(this.rcsum[0], (byte) (v1 & 255)) >> 5; // 18
 
@@ -670,107 +673,107 @@ class Pcm {
             {
                 {
                     // 1
-                    int v1 = this.ram2[30][4];
+                    int v1 = this.ram2[30][4] & 0xffff;
                     int m1 = multi(this.ram1[29][0], (byte) (v1 >> 8)) >> 6;
                     int v2 = 0;
-                    int s1 = eram_unpack(this.ram2[28][1] + this.tv_counter, 1);
-                    int s2 = eram_unpack(this.ram2[28][1] + this.tv_counter, 0);
+                    int s1 = eram_unpack((this.ram2[28][1] & 0xffff) + this.tv_counter, 1);
+                    int s2 = eram_unpack((this.ram2[28][1] & 0xffff) + this.tv_counter, 0);
                     if ((v1 & 0x30) != 0) {
                         v2 = s1;
                     }
-                    int v3 = addclip20(m1, v2 ^ 0xfffff, 1);
+                    int v3 = addclip20(m1, v2 ^ 0xf_ffff, 1);
                     this.ram1[29][4] = v3;
                     int m2 = multi(v3, (byte) (v1 & 255)) >> 5;
                     this.ram1[29][5] = addclip20(m2 >> 1, s2, m2 & 1);
                 }
                 {
                     // 2
-                    int v1 = this.ram2[30][4];
+                    int v1 = this.ram2[30][4] & 0xffff;
                     int v2 = 0;
-                    int s1 = eram_unpack(this.ram2[28][2] + this.tv_counter, 1);
-                    int s2 = eram_unpack(this.ram2[28][2] + this.tv_counter, 0);
+                    int s1 = eram_unpack((this.ram2[28][2] & 0xffff) + this.tv_counter, 1);
+                    int s2 = eram_unpack((this.ram2[28][2] & 0xffff) + this.tv_counter, 0);
                     if ((v1 & 0x30) != 0) {
                         v2 = s1;
                     }
-                    int v3 = addclip20(this.ram1[29][5], v2 ^ 0xfffff, 1);
+                    int v3 = addclip20(this.ram1[29][5], v2 ^ 0xf_ffff, 1);
                     this.ram1[29][5] = v3;
                     int m2 = multi(v3, (byte) (v1 & 255)) >> 5;
                     this.ram1[28][0] = addclip20(m2 >> 1, s2, m2 & 1);
                 }
                 {
                     // 3
-                    int v1 = this.ram2[30][4];
+                    int v1 = this.ram2[30][4] & 0xffff;
                     int v2 = 0;
-                    int s1 = eram_unpack(this.ram2[28][3] + this.tv_counter, 1);
-                    int s2 = eram_unpack(this.ram2[28][3] + this.tv_counter, 0);
+                    int s1 = eram_unpack((this.ram2[28][3] & 0xffff) + this.tv_counter, 1);
+                    int s2 = eram_unpack((this.ram2[28][3] & 0xffff) + this.tv_counter, 0);
                     if ((v1 & 0x30) != 0) {
                         v2 = s1;
                     }
-                    int v3 = addclip20(this.ram1[28][0], v2 ^ 0xfffff, 1);
+                    int v3 = addclip20(this.ram1[28][0], v2 ^ 0xf_ffff, 1);
                     this.ram1[28][0] = v3;
                     int m2 = multi(v3, (byte) (v1 & 255)) >> 5;
                     this.ram1[28][1] = addclip20(m2 >> 1, s2, m2 & 1);
 
 
-                    this.ram1[28][2] = eram_unpack(this.ram2[28][5] + this.tv_counter, 0);
+                    this.ram1[28][2] = eram_unpack((this.ram2[28][5] & 0xffff) + this.tv_counter, 0);
                 }
                 {
                     // 4
-                    int v1 = this.ram2[30][5];
+                    int v1 = this.ram2[30][5] & 0xffff;
                     int v2 = 0;
-                    int s1 = eram_unpack(this.ram2[28][4] + this.tv_counter, 1);
-                    int s2 = eram_unpack(this.ram2[28][4] + this.tv_counter, 0);
+                    int s1 = eram_unpack((this.ram2[28][4] & 0xffff) + this.tv_counter, 1);
+                    int s2 = eram_unpack((this.ram2[28][4] & 0xffff) + this.tv_counter, 0);
                     if ((v1 & 0x30) != 0) {
                         v2 = s1;
                     }
-                    int v3 = addclip20(this.ram1[28][1], v2 ^ 0xfffff, 1);
+                    int v3 = addclip20(this.ram1[28][1], v2 ^ 0xf_ffff, 1);
                     this.ram1[28][1] = v3;
                     int m2 = multi(v3, (byte) (v1 & 255)) >> 5;
                     this.ram1[28][3] = addclip20(m2 >> 1, s2, m2 & 1);
 
 
-                    this.ram1[28][4] = eram_unpack(this.ram2[29][1] + this.tv_counter, 0);
+                    this.ram1[28][4] = eram_unpack((this.ram2[29][1] & 0xffff) + this.tv_counter, 0);
                 }
                 {
                     // 5
 
-                    int v1 = this.ram2[30][7];
+                    int v1 = this.ram2[30][7] & 0xffff;
                     int m1 = multi(this.ram1[29][2], (byte) (v1 >> 8)) >> 5;
-                    int s1 = eram_unpack(this.ram2[29][0] + this.tv_counter, 0);
+                    int s1 = eram_unpack((this.ram2[29][0] & 0xffff) + this.tv_counter, 0);
                     int m2 = multi(s1, (byte) (v1 & 255)) >> 5;
                     this.ram1[29][2] = addclip20(m1 >> 1, m2 >> 1, (m1 | m2) & 1);
 
-                    eram_pack(this.ram2[28][0] + this.tv_counter, this.ram1[29][4]);
+                    eram_pack((this.ram2[28][0] & 0xffff) + this.tv_counter, this.ram1[29][4]);
                 }
                 {
                     // 6
 
-                    int v1 = this.ram2[30][8];
+                    int v1 = this.ram2[30][8] & 0xffff;
                     int m1 = multi(this.ram1[29][3], (byte) (v1 >> 8)) >> 5;
-                    int s1 = eram_unpack(this.ram2[29][8] + this.tv_counter, 0);
+                    int s1 = eram_unpack((this.ram2[29][8] & 0xffff) + this.tv_counter, 0);
                     int m2 = multi(s1, (byte) (v1 & 255)) >> 5;
                     this.ram1[29][3] = addclip20(m1 >> 1, m2 >> 1, (m1 | m2) & 1);
 
-                    eram_pack(this.ram2[28][1] + this.tv_counter, this.ram1[29][5]);
+                    eram_pack((this.ram2[28][1] & 0xffff) + this.tv_counter, this.ram1[29][5]);
 
-                    eram_pack(this.ram2[28][2] + this.tv_counter, this.ram1[28][0]);
+                    eram_pack((this.ram2[28][2] & 0xffff) + this.tv_counter, this.ram1[28][0]);
                 }
                 {
                     // 7
 
-                    int v1 = this.ram2[30][9];
+                    int v1 = this.ram2[30][9] & 0xffff;
                     int v2 = this.ram1[28][3];
                     int m1 = multi(this.ram1[29][2], (byte) (v1 >> 8)) >> 5;
                     int m2 = multi(this.ram1[29][3], (byte) (v1 >> 8)) >> 5;
                     this.ram1[28][3] = addclip20(v2, m1 >> 1, m1 & 1);
                     this.ram1[28][5] = addclip20(v2, m2 >> 1, m2 & 1);
 
-                    eram_pack(this.ram2[28][3] + this.tv_counter, this.ram1[28][1]);
+                    eram_pack((this.ram2[28][3] & 0xffff) + this.tv_counter, this.ram1[28][1]);
                 }
                 {
                     // 8
 
-                    int v1 = this.ram2[30][6];
+                    int v1 = this.ram2[30][6] & 0xffff;
                     int m1 = multi(this.ram1[28][2], (byte) (v1 >> 8)) >> 5;
 
                     int v2 = addclip20(this.ram1[28][3], m1 >> 1, m1 & 1);
@@ -778,13 +781,12 @@ class Pcm {
                     int m2 = multi(v2, (byte) (v1 & 255)) >> 5;
                     this.ram1[28][2] = addclip20(this.ram1[28][2], m2 >> 1, m2 & 1);
 
-
-                    this.ram1[28][1] = eram_unpack(this.ram2[28][9] + this.tv_counter, 0);
+                    this.ram1[28][1] = eram_unpack((this.ram2[28][9] & 0xffff) + this.tv_counter, 0);
                 }
                 {
                     // 9
 
-                    int v1 = this.ram2[30][6];
+                    int v1 = this.ram2[30][6] & 0xffff;
                     int m1 = multi(this.ram1[28][4], (byte) (v1 >> 8)) >> 5;
 
                     int v2 = addclip20(this.ram1[28][5], m1 >> 1, m1 & 1);
@@ -792,90 +794,88 @@ class Pcm {
                     int m2 = multi(v2, (byte) (v1 & 255)) >> 5;
                     this.ram1[28][4] = addclip20(this.ram1[28][4], m2 >> 1, m2 & 1);
 
-
-                    this.ram1[29][4] = eram_unpack(this.ram2[29][5] + this.tv_counter, 0);
+                    this.ram1[29][4] = eram_unpack((this.ram2[29][5] & 0xffff) + this.tv_counter, 0);
                 }
                 {
                     // 10
 
-                    int v1 = this.ram2[30][6];
+                    int v1 = this.ram2[30][6] & 0xffff;
                     int v2 = this.ram1[28][1];
                     int m1 = multi(v2, (byte) (v1 >> 8)) >> 5;
-                    int s1 = eram_unpack(this.ram2[28][8] + this.tv_counter, 0);
+                    int s1 = eram_unpack((this.ram2[28][8] & 0xffff) + this.tv_counter, 0);
                     int v3 = addclip20(m1 >> 1, s1, m1 & 1);
                     this.ram1[28][1] = v3;
                     int m2 = multi(v3, (byte) (v1 & 255)) >> 5;
                     this.ram1[29][5] = addclip20(m2 >> 1, v2, m2 & 1);
 
-                    eram_pack(this.ram2[28][4] + this.tv_counter, this.ram1[28][3]);
+                    eram_pack((this.ram2[28][4] & 0xffff) + this.tv_counter, this.ram1[28][3]);
                 }
                 {
                     // 11
 
-                    int v1 = this.ram2[30][6];
+                    int v1 = this.ram2[30][6] & 0xffff;
                     int v2 = this.ram1[29][4];
                     int m1 = multi(v2, (byte) (v1 >> 8)) >> 5;
-                    int s1 = eram_unpack(this.ram2[29][4] + this.tv_counter, 0);
+                    int s1 = eram_unpack((this.ram2[29][4] & 0xffff) + this.tv_counter, 0);
                     int v3 = addclip20(m1 >> 1, s1, m1 & 1);
                     this.ram1[29][4] = v3;
                     int m2 = multi(v3, (byte) (v1 & 255)) >> 5;
                     this.ram1[28][0] = addclip20(m2 >> 1, v2, m2 & 1);
 
-                    eram_pack(this.ram2[28][5] + this.tv_counter, this.ram1[28][2]);
+                    eram_pack((this.ram2[28][5] & 0xffff) + this.tv_counter, this.ram1[28][2]);
 
-                    eram_pack(this.ram2[29][0] + this.tv_counter, this.ram1[28][5]);
+                    eram_pack((this.ram2[29][0] & 0xffff) + this.tv_counter, this.ram1[28][5]);
                 }
                 {
                     // 12
 
-                    this.ram1[28][5] = eram_unpack(this.ram2[28][6] + this.tv_counter, 0);
+                    this.ram1[28][5] = eram_unpack((this.ram2[28][6] & 0xffff) + this.tv_counter, 0);
                 }
 
                 {
                     // 13
 
-                    int s1 = eram_unpack(this.ram2[28][10] + this.tv_counter, 0);
+                    int s1 = eram_unpack((this.ram2[28][10] & 0xffff) + this.tv_counter, 0);
                     this.ram1[28][5] = addclip20(this.ram1[28][5], s1, 0);
 
-                    this.ram1[28][2] = eram_unpack(this.ram2[29][2] + this.tv_counter, 0);
+                    this.ram1[28][2] = eram_unpack((this.ram2[29][2] & 0xffff) + this.tv_counter, 0);
                 }
 
                 {
                     // 14
 
-                    int s1 = eram_unpack(this.ram2[29][6] + this.tv_counter, 0);
+                    int s1 = eram_unpack((this.ram2[29][6] & 0xffff) + this.tv_counter, 0);
                     int t1 = addclip20(s1, this.ram1[28][2], 0); // 6
 
                     this.ram1[28][5] = addclip20(t1, this.ram1[28][5], 0);
 
-                    this.ram1[28][2] = eram_unpack(this.ram2[28][7] + this.tv_counter, 0);
+                    this.ram1[28][2] = eram_unpack((this.ram2[28][7] & 0xffff) + this.tv_counter, 0);
                 }
 
                 {
                     // 15
 
-                    int s1 = eram_unpack(this.ram2[28][11] + this.tv_counter, 0);
+                    int s1 = eram_unpack((this.ram2[28][11] & 0xffff) + this.tv_counter, 0);
                     this.ram1[28][2] = addclip20(this.ram1[28][2], s1, 0);
 
-                    this.ram1[28][3] = eram_unpack(this.ram2[29][3] + this.tv_counter, 0);
+                    this.ram1[28][3] = eram_unpack((this.ram2[29][3] & 0xffff) + this.tv_counter, 0);
                 }
 
                 {
                     // 16
 
-                    int s1 = eram_unpack(this.ram2[29][7] + this.tv_counter, 0);
+                    int s1 = eram_unpack((this.ram2[29][7] & 0xffff) + this.tv_counter, 0);
                     int t1 = addclip20(s1, this.ram1[28][2], 0);
                     this.ram1[28][2] = addclip20(t1, this.ram1[28][3], 0);
 
+                    eram_pack((this.ram2[29][1] & 0xffff) + this.tv_counter, this.ram1[28][4]);
 
-                    eram_pack(this.ram2[29][1] + this.tv_counter, this.ram1[28][4]);
-
-                    eram_pack(this.ram2[28][8] + this.tv_counter, this.ram1[28][1]);
+                    eram_pack((this.ram2[28][8] & 0xffff) + this.tv_counter, this.ram1[28][1]);
                 }
 
                 {
                     // 17
-                    int v1 = this.ram2[30][2];
+                    int v1 = this.ram2[30][2] & 0xffff;
                     int v2 = this.ram1[28][5];
 
                     int m1 = multi(v2, (byte) (v1 >> 8)) >> 5;
@@ -884,14 +884,14 @@ class Pcm {
 
                     rcadd2[0] = multi(v2, (byte) (v1 & 255)) >> 5;
 
-                    int t1 = eram_unpack(this.ram2[29][10] + this.tv_counter + 1, 0); //? 3a6e
-                    eram_pack(this.ram2[28][9] + this.tv_counter, this.ram1[29][5]);
+                    int t1 = eram_unpack((this.ram2[29][10] & 0xffff) + this.tv_counter + 1, 0); //? 3a6e
+                    eram_pack((this.ram2[28][9] & 0xffff) + this.tv_counter, this.ram1[29][5]);
                     this.ram1[29][5] = t1;
                 }
 
                 {
                     // 18
-                    int v1 = this.ram2[30][3];
+                    int v1 = this.ram2[30][3] & 0xffff;
                     int v2 = this.ram1[28][2];
 
                     int m1 = multi(v2, (byte) (v1 >> 8)) >> 5;
@@ -900,16 +900,16 @@ class Pcm {
 
                     rcadd2[1] = multi(v2, (byte) (v1 & 255)) >> 5;
 
-                    this.ram1[28][1] = eram_unpack(this.ram2[29][11] + this.tv_counter + 1, 0); //? 3a1e
+                    this.ram1[28][1] = eram_unpack((this.ram2[29][11] & 0xffff) + this.tv_counter + 1, 0); //? 3a1e
                 }
                 {
                     // 19
 
-                    int v1 = this.ram2[31][9];
+                    int v1 = this.ram2[31][9] & 0xffff;
 
-                    int s1 = eram_unpack(this.ram2[29][10] + this.tv_counter, 0); //? 3a6d
+                    int s1 = eram_unpack((this.ram2[29][10] & 0xffff) + this.tv_counter, 0); //? 3a6d
 
-                    eram_pack(this.ram2[29][4] + this.tv_counter, this.ram1[29][4]);
+                    eram_pack((this.ram2[29][4] & 0xffff) + this.tv_counter, this.ram1[29][4]);
 
                     int m1 = multi(s1, (byte) (v1 >> 8)) >> 5;
                     int m2 = multi(this.ram1[29][5], (byte) (v1 >> 8)) >> 5;
@@ -921,11 +921,11 @@ class Pcm {
                 {
                     // 20
 
-                    int v1 = this.ram2[31][10];
+                    int v1 = this.ram2[31][10] & 0xffff;
 
-                    int s1 = eram_unpack(this.ram2[29][11] + this.tv_counter, 0); //? 3a1d
+                    int s1 = eram_unpack((this.ram2[29][11] & 0xffff) + this.tv_counter, 0); //? 3a1d
 
-                    eram_pack(this.ram2[29][5] + this.tv_counter, this.ram1[28][0]);
+                    eram_pack((this.ram2[29][5] & 0xffff) + this.tv_counter, this.ram1[28][0]);
 
                     int m1 = multi(s1, (byte) (v1 >> 8)) >> 5;
                     int m2 = multi(this.ram1[28][1], (byte) (v1 >> 8)) >> 5;
@@ -934,12 +934,12 @@ class Pcm {
 
                     this.ram1[28][1] = addclip20(t2, m2 >> 1, m2 & 1);
 
-                    eram_pack(this.ram2[29][9] + this.tv_counter, this.ram1[29][1]);
+                    eram_pack((this.ram2[29][9] & 0xffff) + this.tv_counter, this.ram1[29][1]);
                 }
                 {
                     // 21
 
-                    int v1 = this.ram2[31][2];
+                    int v1 = this.ram2[31][2] & 0xffff;
                     int v2 = this.ram1[29][5];
 
                     int m1 = multi(v2, (byte) (v1 >> 8)) >> 5;
@@ -951,7 +951,7 @@ class Pcm {
                 {
                     // 22
 
-                    int v1 = this.ram2[31][3];
+                    int v1 = this.ram2[31][3] & 0xffff;
                     int v2 = this.ram1[29][5];
 
                     int m1 = multi(v2, (byte) (v1 >> 8)) >> 5;
@@ -963,7 +963,7 @@ class Pcm {
                 {
                     // 23
 
-                    int v1 = this.ram2[31][4];
+                    int v1 = this.ram2[31][4] & 0xffff;
                     int v2 = this.ram1[28][1];
 
                     int m1 = multi(v2, (byte) (v1 >> 8)) >> 5;
@@ -975,7 +975,7 @@ class Pcm {
                 {
                     // 31
 
-                    int v1 = this.ram2[31][5];
+                    int v1 = this.ram2[31][5] & 0xffff;
                     int v2 = this.ram1[28][1];
 
                     int m1 = multi(v2, (byte) (v1 >> 8)) >> 5;
@@ -1113,7 +1113,7 @@ class Pcm {
                     wave_address += (nibble_add ? 1 : 0) - (nibble_subtract ? 1 : 0);
                 wave_address &= 0xfffff;
 
-                int newnibble = PCM_ReadROM((hiaddr << 20) | wave_address);
+                int newnibble = PCM_ReadROM((hiaddr << 20) | wave_address) & 0xff;
                 boolean newnibble_sel = address_b4 ^ ((b6 || !nibble_cmp1) && okey);
                 if (newnibble_sel)
                     newnibble = (newnibble >> 4) & 15;
@@ -1122,7 +1122,7 @@ class Pcm {
 
                 int sub_phase = (ram2[8] & 0x3fff); // 1
                 int interp_ratio = (sub_phase >> 7) & 127;
-                sub_phase += this.ram2[ram2[7] & 31][0]; // 5
+                sub_phase += this.ram2[ram2[7] & 31][0] & 0xffff; // 5
                 int sub_phase_of = (sub_phase >> 14) & 7;
                 if (this.nfs != 0) {
                     ram2[8] &= ~0x3fff;
@@ -1131,7 +1131,7 @@ class Pcm {
 
                 // address 0
                 int address_cnt = address;
-                int samp0 = PCM_ReadROM((hiaddr << 20) | address_cnt); // 18
+                int samp0 = PCM_ReadROM((hiaddr << 20) | address_cnt) & 0xff; // 18
 
                 cmp1 = address;
                 cmp2 = address_cnt;
@@ -1157,7 +1157,7 @@ class Pcm {
                 address_cnt = address_cnt2 & 0xf_ffff; // 11
                 b15 = b6 && (b15 ^ address_cmp); // 11
 
-                int samp1 = (byte) PCM_ReadROM((hiaddr << 20) | address_cnt); // 20
+                int samp1 = PCM_ReadROM((hiaddr << 20) | address_cnt) & 0xff; // 20
 
                 cmp1 = address;
                 cmp2 = address_cnt;
@@ -1185,7 +1185,7 @@ class Pcm {
                 address_cnt = address_cnt2 & 0xf_ffff; // 15
                 b15 = b6 && (b15 ^ address_cmp); // 15
 
-                int samp2 = (byte) PCM_ReadROM((hiaddr << 20) | address_cnt); // 1
+                int samp2 = PCM_ReadROM((hiaddr << 20) | address_cnt) & 0xff; // 1
 
                 cmp1 = address;
                 cmp2 = address_cnt;
@@ -1213,7 +1213,7 @@ class Pcm {
                 address_cnt = address_cnt2 & 0xf_ffff; // 19
                 b15 = b6 && (b15 ^ address_cmp); // 19
 
-                int samp3 = (byte) PCM_ReadROM((hiaddr << 20) | address_cnt); // 5
+                int samp3 = PCM_ReadROM((hiaddr << 20) | address_cnt) & 0xff; // 5
 
                 cmp1 = address;
                 cmp2 = address_cnt;
@@ -1311,7 +1311,6 @@ class Pcm {
                 step0 = (step0 << 1) >> shift;
 
                 test = addclip20(test, step0 >> 1, step0 & 1);
-
 
                 int step1 = multi(interp_lut[1][interp_ratio] << 6, (byte) samp1) >> 8;
                 select_nibble = nibble_cmp3 ? old_nibble : newnibble;

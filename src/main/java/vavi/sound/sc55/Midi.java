@@ -41,6 +41,7 @@ import javax.sound.midi.Receiver;
 import static java.lang.System.getLogger;
 
 
+// unused now
 class Midi {
 
     private static final Logger logger = getLogger(Midi.class.getName());

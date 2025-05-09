@@ -141,11 +141,19 @@ class SubMcu {
         SM_DEV_INT_REQUEST(0x1c),
         SM_DEV_PRESCALER(0x1d),
         SM_DEV_TIMER(0x1e),
-        SM_DEV_TIMER_CTRL(0x1f);
+        SM_DEV_TIMER_CTRL(0x1f),
+        SM_UNKNOWN(-1);
         final int v;
 
         SmDev(int v) {
             this.v = v;
+        }
+
+        public static SmDev valueOf(int address) {
+            for (SmDev dev : values())
+                if (dev.v == address)
+                    return dev;
+            return SM_UNKNOWN;
         }
     }
 
@@ -188,7 +196,7 @@ class SubMcu {
             return sm_access[address & 0x1f];
         } else if (address >= 0xe0 && address < 0x100) {
             address &= 0x1f;
-            switch (SmDev.values()[address]) {
+            switch (SmDev.valueOf(address)) {
                 case SM_DEV_UART2_DATA: {
                     uart_rx_gotbyte = 0;
                     return uart_rx_byte;
@@ -221,7 +229,7 @@ class SubMcu {
         } else if (address >= 0x200 && address < 0x2c0) {
             address &= 0xff;
             if ((sm_device_mode[SM_DEV_RAM_DIR.v] & (1 << (address >> 5))) != 0)
-                sm_access[address >> 3] &= ~(1 << (address & 7));
+                sm_access[(address & 0xffff) >> 3] &= (byte) ~(1 << (address & 7));
             return sm_shared_ram[address];
         } else {
             logger.log(Level.DEBUG, "sm: unknown read %x".formatted(address));
@@ -235,7 +243,7 @@ class SubMcu {
             sm_ram[address] = data;
         } else if (address >= 0xe0 && address < 0x100) {
             address &= 0x1f;
-            switch (SmDev.values()[address]) {
+            switch (SmDev.valueOf(address)) {
                 case SM_DEV_P1_DATA:
                     mcu.MCU_WriteP1(data);
                     break;
@@ -301,7 +309,7 @@ class SubMcu {
         } else if (address == 0xf7) {
             sm_p0_dir = data;
         } else {
-            logger.log(Level.DEBUG, "sm: unknown sys write %x %x\n", address, data);
+            logger.log(Level.TRACE, "sm: unknown sys write %x %x", address, data);
         }
     }
 
@@ -327,13 +335,13 @@ class SubMcu {
         } else if (address == 0xf7) {
             return sm_p0_dir;
         } else {
-            logger.log(Level.DEBUG, "sm: unknown sys read %x".formatted(address));
+            logger.log(Level.TRACE, "sm: unknown sys read %x".formatted(address));
             return 0;
         }
     }
 
     short SM_GetVectorAddress(int vector) {
-        short pc = SM_Read((short) (0x1fec + vector * 2));
+        short pc = (short) (SM_Read((short) (0x1fec + vector * 2)) & 0xff);
         pc |= (short) (SM_Read((short) (0x1fec + vector * 2 + 1)) << 8);
         return pc;
     }
@@ -356,14 +364,14 @@ class SubMcu {
     }
 
     short SM_ReadAdvance16() {
-        short word = SM_ReadAdvance();
-        word |= (short) (SM_ReadAdvance() << 8);
+        short word = (short) (SM_ReadAdvance() & 0xff);
+        word |= (short) ((SM_ReadAdvance() & 0xff) << 8);
         return word;
     }
 
     short SM_Read16(short address) {
-        short word = SM_Read(address);
-        word |= (short) (SM_Read(address) << 8);
+        short word = (short) (SM_Read(address) & 0xff);
+        word |= (short) ((SM_Read(address) & 0xff) << 8);
         return word;
     }
 
@@ -405,16 +413,16 @@ class SubMcu {
                 val = SM_ReadAdvance();
                 break;
             case 0xa6:
-                val = SM_Read(SM_ReadAdvance());
+                val = SM_Read((short) (SM_ReadAdvance() & 0xff));
                 break;
             case 0xb6:
-                val = SM_Read((short) ((SM_ReadAdvance() + this.y) & 0xff));
+                val = SM_Read((short) (((SM_ReadAdvance() & 0xff) + (this.y & 0xff)) & 0xff));
                 break;
             case 0xae:
                 val = SM_Read(SM_ReadAdvance16());
                 break;
             case 0xbe:
-                val = SM_Read((short) (SM_ReadAdvance16() + this.y));
+                val = SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.y & 0xff)));
                 break;
         }
         this.x = val;
@@ -428,16 +436,16 @@ class SubMcu {
                 val = SM_ReadAdvance();
                 break;
             case 0xa4:
-                val = SM_Read(SM_ReadAdvance());
+                val = SM_Read((short) (SM_ReadAdvance() & 0xff));
                 break;
             case 0xac:
                 val = SM_Read(SM_ReadAdvance16());
                 break;
             case 0xb4:
-                val = SM_Read((short) ((SM_ReadAdvance() + this.x) & 0xff));
+                val = SM_Read((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff));
                 break;
             case 0xbc:
-                val = SM_Read((short) (SM_ReadAdvance16() + this.x));
+                val = SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.x & 0xff)));
                 break;
         }
         this.y = val;
@@ -457,25 +465,25 @@ class SubMcu {
         short dest = 0;
         switch (opcode & 0xff) {
             case 0x85:
-                dest = SM_ReadAdvance();
+                dest = (short) (SM_ReadAdvance() & 0xff);
                 break;
             case 0x95:
-                dest = (short) (SM_ReadAdvance() + this.x);
+                dest = (short) ((SM_ReadAdvance() & 0xff) + (this.x & 0xff));
                 break;
             case 0x8d:
                 dest = SM_ReadAdvance16();
                 break;
             case 0x9d:
-                dest = (short) (SM_ReadAdvance16() + this.x);
+                dest = (short) ((SM_ReadAdvance16() & 0xffff) + (this.x & 0xff));
                 break;
             case 0x99:
-                dest = (short) (SM_ReadAdvance16() + this.y);
+                dest = (short) ((SM_ReadAdvance16() & 0xffff) + (this.y & 0xff));
                 break;
             case 0x81:
-                dest = SM_Read16((short) ((SM_ReadAdvance() + this.x) & 0xff));
+                dest = SM_Read16((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff)); // byte size
                 break;
             case 0x91:
-                dest = (short) (SM_Read16(SM_ReadAdvance()) + this.y);
+                dest = (short) (SM_Read16((short) (SM_ReadAdvance() & 0xff)) + (this.y & 0xff));
                 break;
         }
 
@@ -501,10 +509,10 @@ class SubMcu {
         if (zp == 0) {
             val = this.a;
         } else {
-            val = SM_Read(SM_ReadAdvance());
+            val = SM_Read((short) (SM_ReadAdvance() & 0xff));
         }
 
-        byte diff = SM_ReadAdvance();
+        byte diff = SM_ReadAdvance(); // signed
 
         int set = (val >> bit) & 1;
 
@@ -519,13 +527,13 @@ class SubMcu {
                 operand = SM_ReadAdvance();
                 break;
             case 0xe4:
-                operand = SM_Read(SM_ReadAdvance());
+                operand = SM_Read((short) (SM_ReadAdvance() & 0xff));
                 break;
             case 0xec:
                 operand = SM_Read(SM_ReadAdvance16());
                 break;
         }
-        int diff = this.x - operand;
+        int diff = (this.x & 0xff) - (operand & 0xff);
         SM_SetStatus((diff & 0x100) == 0 ? 1 : 0, SM_STATUS_C.v);
         SM_Update_NZ((byte) (diff & 0xff));
     }
@@ -537,38 +545,38 @@ class SubMcu {
                 operand = SM_ReadAdvance();
                 break;
             case 0xc4:
-                operand = SM_Read(SM_ReadAdvance());
+                operand = SM_Read((short) (SM_ReadAdvance() & 0xff));
                 break;
             case 0xcc:
                 operand = SM_Read(SM_ReadAdvance16());
                 break;
         }
-        int diff = this.y - operand;
+        int diff = (this.y & 0xff) - (operand & 0xff);
         SM_SetStatus((diff & 0x100) == 0 ? 1 : 0, SM_STATUS_C.v);
         SM_Update_NZ((byte) (diff & 0xff));
     }
 
     void SM_Opcode_BEQ(byte opcode) { // f0
-        byte diff = SM_ReadAdvance();
+        int diff = SM_ReadAdvance(); // signed
         if ((this.sr & SM_STATUS_Z.v) != 0)
-            this.pc += diff;
+            this.pc += (short) diff;
     }
 
     void SM_Opcode_BCC(byte opcode) { // 90
-        byte diff = SM_ReadAdvance();
+        int diff = SM_ReadAdvance(); // signed
         if ((this.sr & SM_STATUS_C.v) == 0)
-            this.pc += diff;
+            this.pc += (short) diff;
     }
 
     void SM_Opcode_BCS(byte opcode) { // b0
-        byte diff = SM_ReadAdvance();
+        int diff = SM_ReadAdvance(); // signed
         if ((this.sr & SM_STATUS_C.v) != 0)
-            this.pc += diff;
+            this.pc += (short) diff;
     }
 
     void SM_Opcode_LDM(byte opcode) { // 3c
         byte val = SM_ReadAdvance();
-        SM_Write(SM_ReadAdvance(), val);
+        SM_Write((short) (SM_ReadAdvance() & 0xff), val);
     }
 
     void SM_Opcode_LDA(byte opcode) { // a9, a5, b5, ad, bd, b9, a1, b1
@@ -578,25 +586,25 @@ class SubMcu {
                 val = SM_ReadAdvance();
                 break;
             case 0xa5:
-                val = SM_Read(SM_ReadAdvance());
+                val = SM_Read((short) (SM_ReadAdvance() & 0xff));
                 break;
             case 0xb5:
-                val = SM_Read((short) ((SM_ReadAdvance() + this.x) & 0xff));
+                val = SM_Read((short) (((SM_ReadAdvance() & 0xff) + this.x) & 0xff)); // byte size
                 break;
             case 0xad:
                 val = SM_Read(SM_ReadAdvance16());
                 break;
             case 0xbd:
-                val = SM_Read((short) (SM_ReadAdvance16() + this.x));
+                val = SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.x & 0xff)));
                 break;
             case 0xb9:
-                val = SM_Read((short) (SM_ReadAdvance16() + this.y));
+                val = SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.y & 0xff)));
                 break;
             case 0xa1:
-                val = SM_Read(SM_Read16((short) ((SM_ReadAdvance() + this.x) & 0xff)));
+                val = SM_Read(SM_Read16((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff))); // byte size
                 break;
             case 0xb1:
-                val = SM_Read((short) (SM_Read16(SM_ReadAdvance()) + this.y));
+                val = SM_Read((short) (SM_Read16((short) (SM_ReadAdvance() & 0xff)) + (this.y & 0xff)));
                 break;
         }
 
@@ -605,7 +613,7 @@ class SubMcu {
             SM_Update_NZ(val);
         } else {
             // FIXME
-            SM_Write(this.x, val);
+            SM_Write((short) (this.x & 0xff), val);
         }
     }
 
@@ -632,7 +640,7 @@ class SubMcu {
             val = this.a;
         } else {
             dest = SM_ReadAdvance();
-            val = SM_Read(dest);
+            val = SM_Read((short) (dest & 0xff));
         }
 
         if (type != 0)
@@ -643,14 +651,14 @@ class SubMcu {
         if (zp == 0) {
             this.a = val;
         } else {
-            SM_Write(dest, val);
+            SM_Write((short) (dest & 0xff), val);
         }
     }
 
     void SM_Opcode_RTI(byte opcode) { // 40
         this.sr = SM_PopStack();
-        this.pc = SM_PopStack();
-        this.pc |= (short) (SM_PopStack() << 8);
+        this.pc = (short) (SM_PopStack() & 0xff);
+        this.pc |= (short) ((SM_PopStack() & 0xff) << 8);
     }
 
     void SM_Opcode_PLA(byte opcode) { // 68
@@ -659,8 +667,8 @@ class SubMcu {
     }
 
     void SM_Opcode_BRA(byte opcode) { // 80
-        byte disp = SM_ReadAdvance();
-        this.pc += disp;
+        int disp = SM_ReadAdvance(); // signed
+        this.pc += (short) disp;
     }
 
     void SM_Opcode_JSR(byte opcode) { // 20, 02, 22
@@ -670,14 +678,14 @@ class SubMcu {
                 newpc = SM_ReadAdvance16();
                 break;
             case 0x02:
-                newpc = SM_Read16(SM_ReadAdvance());
+                newpc = SM_Read16((short) (SM_ReadAdvance() & 0xff));
                 break;
             case 0x22:
-                newpc = (short) (0xff00 | SM_ReadAdvance());
+                newpc = (short) (0xff00 | (SM_ReadAdvance() & 0xff));
                 break;
         }
 
-        SM_PushStack((byte) (this.pc >> 8));
+        SM_PushStack((byte) ((this.pc & 0xffff) >> 8));
         SM_PushStack((byte) (this.pc & 0xff));
         this.pc = newpc;
     }
@@ -690,41 +698,41 @@ class SubMcu {
                 operand = SM_ReadAdvance();
                 break;
             case 0xc5:
-                operand = SM_Read(SM_ReadAdvance());
+                operand = SM_Read((short) (SM_ReadAdvance() & 0xff));
                 break;
             case 0xd5:
-                operand = SM_Read((short) ((SM_ReadAdvance() + this.x) & 0xff));
+                operand = SM_Read((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff)); // byte size
                 break;
             case 0xcd:
                 operand = SM_Read(SM_ReadAdvance16());
                 break;
             case 0xdd:
-                operand = SM_Read((short) (SM_ReadAdvance16() + this.x));
+                operand = SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.x & 0xff)));
                 break;
             case 0xd9:
-                operand = SM_Read((short) (SM_ReadAdvance16() + this.y));
+                operand = SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.y & 0xff)));
                 break;
             case 0xc1:
-                operand = SM_Read(SM_Read16((short) ((SM_ReadAdvance() + this.x) & 0xff)));
+                operand = SM_Read(SM_Read16((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff))); // byte size
                 break;
             case 0xd1:
-                operand = SM_Read((short) (SM_Read16(SM_ReadAdvance()) + this.y));
+                operand = SM_Read((short) (SM_Read16((short) (SM_ReadAdvance() & 0xff)) + (this.y & 0xff)));
                 break;
         }
-        int diff = this.a - operand;
+        int diff = (this.a & 0xff) - (operand & 0xff);
         SM_SetStatus((diff & 0x100) == 0 ? 1 : 0, SM_STATUS_C.v);
         SM_Update_NZ((byte) (diff & 0xff));
     }
 
     void SM_Opcode_BNE(byte opcode) { // d0
-        byte diff = SM_ReadAdvance();
+        int diff = SM_ReadAdvance(); // signed
         if ((this.sr & SM_STATUS_Z.v) == 0)
-            this.pc += diff;
+            this.pc += (short) diff;
     }
 
     void SM_Opcode_RTS(byte opcode) { // 60
-        this.pc = SM_PopStack();
-        this.pc |= SM_PopStack() << 8;
+        this.pc = (short) (SM_PopStack() & 0xff);
+        this.pc |= (short) ((SM_PopStack() & 0xff) << 8);
     }
 
     void SM_Opcode_JMP(byte opcode) { // 4c, 6c, b2
@@ -736,7 +744,7 @@ class SubMcu {
                 this.pc = SM_Read16(SM_ReadAdvance16());
                 break;
             case 0xb2:
-                this.pc = SM_Read16(SM_ReadAdvance());
+                this.pc = SM_Read16((short) (SM_ReadAdvance() & 0xff));
                 break;
         }
     }
@@ -749,7 +757,7 @@ class SubMcu {
             val = this.a;
         } else {
             // FIXME
-            val = SM_Read(this.x);
+            val = SM_Read((short) (this.x & 0xff));
         }
 
         switch (opcode) {
@@ -757,25 +765,25 @@ class SubMcu {
                 val2 = SM_ReadAdvance();
                 break;
             case 0x05:
-                val2 = SM_Read(SM_ReadAdvance());
+                val2 = SM_Read((short) (SM_ReadAdvance() & 0xff));
                 break;
             case 0x15:
-                val2 = SM_Read((short) ((SM_ReadAdvance() + this.x) & 0xff));
+                val2 = SM_Read((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff)); // byte size
                 break;
             case 0x0d:
                 val2 = SM_Read(SM_ReadAdvance16());
                 break;
             case 0x1d:
-                val2 = SM_Read((short) (SM_ReadAdvance16() + this.x));
+                val2 = SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.x & 0xff)));
                 break;
             case 0x19:
-                val2 = SM_Read((short) (SM_ReadAdvance16() + this.y));
+                val2 = SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.y & 0xff)));
                 break;
             case 0x01:
-                val2 = SM_Read(SM_Read16((short) ((SM_ReadAdvance() + this.x) & 0xff)));
+                val2 = SM_Read(SM_Read16((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff))); // byte size
                 break;
             case 0x11:
-                val2 = SM_Read((short) (SM_Read16(SM_ReadAdvance()) + this.y));
+                val2 = SM_Read((short) (SM_Read16((short) (SM_ReadAdvance() & 0xff)) + (this.y & 0xff)));
                 break;
         }
 
@@ -787,7 +795,7 @@ class SubMcu {
             SM_Update_NZ(val);
         } else {
             // FIXME
-            SM_Write(this.x, val);
+            SM_Write((short) (this.x & 0xff), val);
         }
     }
 
@@ -800,16 +808,16 @@ class SubMcu {
                 SM_Update_NZ(this.a);
                 return;
             case 0xc6:
-                dest = SM_ReadAdvance();
+                dest = (short) (SM_ReadAdvance() & 0xff);
                 break;
             case 0xd6:
-                dest = (short) ((SM_ReadAdvance() + this.x) & 0xff);
+                dest = (short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff); // byte size
                 break;
             case 0xce:
                 dest = SM_ReadAdvance16();
                 break;
             case 0xde:
-                dest = (short) (SM_ReadAdvance16() + this.x);
+                dest = (short) ((SM_ReadAdvance16() & 0xffff) + (this.x & 0xff));
                 break;
         }
         val = SM_Read(dest);
@@ -827,10 +835,10 @@ class SubMcu {
         short dest = 0;
         switch (opcode & 0xff) {
             case 0x86:
-                dest = SM_ReadAdvance();
+                dest = (short) (SM_ReadAdvance() & 0xff);
                 break;
             case 0x96:
-                dest = (short) (SM_ReadAdvance() + this.x);
+                dest = (short) ((SM_ReadAdvance() & 0xff) + (this.x & 0xff));
                 break;
             case 0x8e:
                 dest = SM_ReadAdvance16();
@@ -844,10 +852,10 @@ class SubMcu {
         short dest = 0;
         switch (opcode & 0xff) {
             case 0x84:
-                dest = SM_ReadAdvance();
+                dest = (short) (SM_ReadAdvance() & 0xff);
                 break;
             case 0x94:
-                dest = (short) ((SM_ReadAdvance() + this.x) & 0xff);
+                dest = (short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff);
                 break;
             case 0x8c:
                 dest = SM_ReadAdvance16();
@@ -865,9 +873,9 @@ class SubMcu {
     }
 
     void SM_Opcode_BPL(byte opcode) { // 10
-        byte diff = SM_ReadAdvance();
+        int diff = SM_ReadAdvance(); // signed
         if ((this.sr & SM_STATUS_N.v) == 0)
-            this.pc += diff;
+            this.pc += (short) diff;
     }
 
     void SM_Opcode_CLC(byte opcode) { // 18
@@ -882,7 +890,7 @@ class SubMcu {
             val = this.a;
         } else {
             // FIXME
-            val = SM_Read(this.x);
+            val = SM_Read((short) (this.x & 0xff));
         }
 
         switch (opcode) {
@@ -890,25 +898,25 @@ class SubMcu {
                 val2 = SM_ReadAdvance();
                 break;
             case 0x25:
-                val2 = SM_Read(SM_ReadAdvance());
+                val2 = SM_Read((short) (SM_ReadAdvance() & 0xff));
                 break;
             case 0x35:
-                val2 = SM_Read((short) ((SM_ReadAdvance() + this.x) & 0xff));
+                val2 = SM_Read((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff)); // byte size
                 break;
             case 0x2d:
                 val2 = SM_Read(SM_ReadAdvance16());
                 break;
             case 0x3d:
-                val2 = SM_Read((short) (SM_ReadAdvance16() + this.x));
+                val2 = SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.x & 0xff)));
                 break;
             case 0x39:
-                val2 = SM_Read((short) (SM_ReadAdvance16() + this.y));
+                val2 = SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.y & 0xff)));
                 break;
             case 0x21:
-                val2 = SM_Read(SM_Read16((short) ((SM_ReadAdvance() + this.x) & 0xff)));
+                val2 = SM_Read(SM_Read16((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff))); // byte size
                 break;
             case 0x31:
-                val2 = SM_Read((short) (SM_Read16(SM_ReadAdvance()) + this.y));
+                val2 = SM_Read((short) (SM_Read16((short) (SM_ReadAdvance() & 0xff)) + (this.y & 0xff)));
                 break;
         }
 
@@ -920,7 +928,7 @@ class SubMcu {
             SM_Update_NZ(val);
         } else {
             // FIXME
-            SM_Write(this.x, val);
+            SM_Write((short) (this.x & 0xff), val);
         }
     }
 
@@ -933,16 +941,16 @@ class SubMcu {
                 SM_Update_NZ(this.a);
                 return;
             case 0xe6:
-                dest = SM_ReadAdvance();
+                dest = (short) (SM_ReadAdvance() & 0xff);
                 break;
             case 0xf6:
-                dest = (short) ((SM_ReadAdvance() + this.x) & 0xff);
+                dest = (short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff);
                 break;
             case 0xee:
                 dest = SM_ReadAdvance16();
                 break;
             case 0xfe:
-                dest = (short) (SM_ReadAdvance16() + this.x);
+                dest = (short) ((SM_ReadAdvance16() & 0xffff) + (this.x & 0xff));
                 break;
         }
         val = SM_Read(dest);
@@ -1262,7 +1270,7 @@ class SubMcu {
             return;
         }
         if ((sm_device_mode[SM_DEV_COLLISION.v] & 0xc0) == 0xc0) {
-            sm_device_mode[SM_DEV_COLLISION.v] &= ~0x80;
+            sm_device_mode[SM_DEV_COLLISION.v] &= (byte) ~0x80;
             SM_StartVector(SM_VECTOR_COLLISION.ordinal());
             return;
         }
@@ -1323,7 +1331,7 @@ class SubMcu {
             return;
 
         uart_rx_byte = mcu.uart_buffer[mcu.uart_read_ptr];
-        mcu.uart_read_ptr = (mcu.uart_read_ptr + 1) % mcu.uart_buffer_size;
+        mcu.uart_read_ptr = (mcu.uart_read_ptr + 1) % Mcu.uart_buffer_size;
         uart_rx_gotbyte = 1;
         sm_device_mode[SM_DEV_INT_REQUEST.v] |= 0x40;
 
@@ -1337,7 +1345,7 @@ class SubMcu {
             if (this.sleep == 0) {
                 byte opcode = SM_ReadAdvance();
 
-                SM_Opcode_Table[opcode].accept(opcode);
+                SM_Opcode_Table[opcode & 0xff].accept(opcode);
             }
 
             this.cycles += 12 * 4; // FIXME

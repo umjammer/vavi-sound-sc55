@@ -1,6 +1,6 @@
 package vavi.sound.sc55;
 
-class LcdFont {
+public class LcdFont {
 
     public static final byte[][] lcd_font = {
             {0x00, 0x1f, 0x00, 0x1f, 0x00, 0x1f, 0x00, 0x00, 0x00, 0x00},

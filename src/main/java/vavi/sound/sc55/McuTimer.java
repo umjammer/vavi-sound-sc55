@@ -34,10 +34,12 @@
 
 package vavi.sound.sc55;
 
+import java.lang.System.Logger;
 import java.util.Arrays;
 
 import vavi.sound.sc55.Mcu.Dev;
 
+import static java.lang.System.getLogger;
 import static vavi.sound.sc55.McuInterrupt.Interrupt.INTERRUPT_SOURCE_FRT0_FOVI;
 import static vavi.sound.sc55.McuInterrupt.Interrupt.INTERRUPT_SOURCE_FRT0_OCIA;
 import static vavi.sound.sc55.McuInterrupt.Interrupt.INTERRUPT_SOURCE_FRT0_OCIB;
@@ -47,6 +49,8 @@ import static vavi.sound.sc55.McuInterrupt.Interrupt.INTERRUPT_SOURCE_TIMER_OVI;
 
 
 class McuTimer {
+
+    private static final Logger logger = getLogger(McuTimer.class.getName());
 
     static class frt_t {
 
@@ -78,7 +82,7 @@ class McuTimer {
     long timer_cycles;
     byte timer_tempreg;
 
-    frt_t[] frt = new frt_t[3];
+    frt_t[] frt = new frt_t[] {new frt_t(), new frt_t(), new frt_t()};
 
     enum Reg {
         REG_TCR,
@@ -97,34 +101,40 @@ class McuTimer {
         timer_cycles = 0;
         timer_tempreg = 0;
         Arrays.setAll(frt, i -> new frt_t());
+        tcr = 0;
+        tcsr = 0;
+        tcora = 0;
+        tcorb = 0;
+        tcnt = 0;
+        status_rd = 0;
     }
 
     void TIMER_Write(int address, byte data) {
-        int t = (address >> 4) - 1;
+        int t = (address >>> 4) - 1;
         if (t > 2)
             return;
         address &= 0x0f;
         frt_t timer = frt[t];
         switch (Reg.values()[address]) {
             case REG_TCR:
-                this.tcr = data;
+                timer.tcr = data;
                 break;
             case REG_TCSR:
-                this.tcsr &= ~0xf;
-                this.tcsr |= (byte) (data & 0xf);
-                if ((data & 0x10) == 0 && (this.status_rd & 0x10) != 0) {
-                    this.tcsr &= ~0x10;
-                    this.status_rd &= ~0x10;
+                timer.tcsr &= ~0xf;
+                timer.tcsr |= (byte) (data & 0xf);
+                if ((data & 0x10) == 0 && (timer.status_rd & 0x10) != 0) {
+                    timer.tcsr &= ~0x10;
+                    timer.status_rd &= ~0x10;
                     mcu.interrupt.MCU_Interrupt_SetRequest(INTERRUPT_SOURCE_FRT0_FOVI.ordinal() + t * 4, false);
                 }
-                if ((data & 0x20) == 0 && (this.status_rd & 0x20) != 0) {
-                    this.tcsr &= ~0x20;
-                    this.status_rd &= ~0x20;
+                if ((data & 0x20) == 0 && (timer.status_rd & 0x20) != 0) {
+                    timer.tcsr &= ~0x20;
+                    timer.status_rd &= ~0x20;
                     mcu.interrupt.MCU_Interrupt_SetRequest(INTERRUPT_SOURCE_FRT0_OCIA.ordinal() + t * 4, false);
                 }
-                if ((data & 0x40) == 0 && (this.status_rd & 0x40) != 0) {
-                    this.tcsr &= ~0x40;
-                    this.status_rd &= ~0x40;
+                if ((data & 0x40) == 0 && (timer.status_rd & 0x40) != 0) {
+                    timer.tcsr &= ~0x40;
+                    timer.status_rd &= ~0x40;
                     mcu.interrupt.MCU_Interrupt_SetRequest(INTERRUPT_SOURCE_FRT0_OCIB.ordinal() + t * 4, false);
                 }
                 break;
@@ -135,32 +145,32 @@ class McuTimer {
                 timer_tempreg = data;
                 break;
             case REG_FRCL:
-                timer.frc = (short) ((timer_tempreg << 8) | data);
+                timer.frc = (short) (((timer_tempreg & 0xff) << 8) | (data & 0xff));
                 break;
             case REG_OCRAL:
-                timer.ocra = (short) ((timer_tempreg << 8) | data);
+                timer.ocra = (short) (((timer_tempreg & 0xff) << 8) | (data & 0xff));
                 break;
             case REG_OCRBL:
-                timer.ocrb = (short) ((timer_tempreg << 8) | data);
+                timer.ocrb = (short) (((timer_tempreg & 0xff) << 8) | (data & 0xff));
                 break;
             case REG_ICRL:
-                timer.icr = (short) ((timer_tempreg << 8) | data);
+                timer.icr = (short) (((timer_tempreg & 0xff) << 8) | (data & 0xff));
                 break;
         }
     }
 
     byte TIMER_Read(int address) {
-        int t = (address >> 4) - 1;
+        int t = (address >>> 4) - 1;
         if (t > 2)
             return (byte) 0xff;
         address &= 0x0f;
         frt_t timer = frt[t];
         switch (Reg.values()[address]) {
             case REG_TCR:
-                return this.tcr;
+                return timer.tcr;
             case REG_TCSR: {
-                byte ret = this.tcsr;
-                this.status_rd |= (byte) (this.tcsr & 0xf0);
+                byte ret = timer.tcsr;
+                timer.status_rd |= (byte) (timer.tcsr & 0xf0);
                 //timer.status_rd |= 0xf0;
                 return ret;
             }
@@ -186,7 +196,7 @@ class McuTimer {
     }
 
     void TIMER2_Write(int address, byte data) {
-        switch (Dev.values()[address]) {
+        switch (Dev.valueOf(address)) {
             case DEV_TMR_TCR:
                 this.tcr = data;
                 break;
@@ -222,7 +232,7 @@ class McuTimer {
     }
 
     byte TIMER_Read2(int address) {
-        switch (Dev.values()[address]) {
+        switch (Dev.valueOf(address)) {
             case DEV_TMR_TCR:
                 return this.tcr;
             case DEV_TMR_TCSR: {
@@ -242,12 +252,13 @@ class McuTimer {
 
     void TIMER_Clock(long cycles) {
         int i;
+//if (mcu.CC >= 57519) { System.err.printf("timer_cycles: %d, cycles: %d%n", timer_cycles, cycles); }
         while (timer_cycles * 2 < cycles) { // FIXME
             for (i = 0; i < 3; i++) {
                 frt_t timer = frt[i];
                 int offset = 0x10 * i;
 
-                switch (this.tcr & 3) {
+                switch (timer.tcr & 3) {
                     case 0: // o / 4
                         if ((timer_cycles & 3) != 0)
                             continue;
@@ -271,10 +282,10 @@ class McuTimer {
                         break;
                 }
 
-                int value = timer.frc;
-                int matcha = value == timer.ocra ? 1 : 0;
-                int matchb = value == timer.ocrb ? 1 : 0;
-                if ((this.tcsr & 1) != 0 && matcha != 0) // CCLRA
+                int value = timer.frc & 0xffff;
+                boolean matcha = value == (timer.ocra & 0xffff);
+                boolean matchb = value == (timer.ocrb & 0xffff);
+                if ((timer.tcsr & 1) != 0 && matcha) // CCLRA
                     value = 0;
                 else
                     value++;
@@ -284,16 +295,18 @@ class McuTimer {
 
                 // flags
                 if (of != 0)
-                    this.tcsr |= 0x10;
-                if (matcha != 0)
-                    this.tcsr |= 0x20;
-                if (matchb != 0)
-                    this.tcsr |= 0x40;
-                if ((this.tcr & 0x10) != 0 && (this.tcsr & 0x10) != 0)
+                    timer.tcsr |= 0x10;
+                if (matcha)
+                    timer.tcsr |= 0x20;
+                if (matchb)
+                    timer.tcsr |= 0x40;
+                if ((timer.tcr & 0x10) != 0 && (timer.tcsr & 0x10) != 0)
                     mcu.interrupt.MCU_Interrupt_SetRequest(INTERRUPT_SOURCE_FRT0_FOVI.ordinal() + i * 4, true);
-                if ((this.tcr & 0x20) != 0 && (this.tcsr & 0x20) != 0)
+//if (mcu.CC > 57519 && mcu.CC < 57583) { System.err.printf("timer_cycles: %d, cycles: %d, t:%d, tcr: %02x, tcsr: %02x%n", timer_cycles, cycles, i, timer.tcr, timer.tcsr); }
+                if ((timer.tcr & 0x20) != 0 && (timer.tcsr & 0x20) != 0) {
                     mcu.interrupt.MCU_Interrupt_SetRequest(INTERRUPT_SOURCE_FRT0_OCIA.ordinal() + i * 4, true);
-                if ((this.tcr & 0x40) != 0 && (this.tcsr & 0x40) != 0)
+                }
+                if ((timer.tcr & 0x40) != 0 && (timer.tcsr & 0x40) != 0)
                     mcu.interrupt.MCU_Interrupt_SetRequest(INTERRUPT_SOURCE_FRT0_OCIB.ordinal() + i * 4, true);
             }
 
@@ -328,12 +341,12 @@ class McuTimer {
                     break;
             }
             if (timer_step != 0) {
-                int value = this.tcnt;
-                int matcha = value == this.tcora ? 1 : 0;
-                int matchb = value == this.tcorb ? 1 : 0;
-                if ((this.tcr & 24) == 8 && matcha != 0)
+                int value = this.tcnt & 0xff;
+                boolean matcha = value == (this.tcora & 0xffff);
+                boolean matchb = value == (this.tcorb & 0xffff);
+                if ((this.tcr & 24) == 8 && matcha)
                     value = 0;
-                else if ((this.tcr & 24) == 16 && matchb != 0)
+                else if ((this.tcr & 24) == 16 && matchb)
                     value = 0;
                 else
                     value++;
@@ -344,9 +357,9 @@ class McuTimer {
                 // flags
                 if (of != 0)
                     this.tcsr |= 0x20;
-                if (matcha != 0)
+                if (matcha)
                     this.tcsr |= 0x40;
-                if (matchb != 0)
+                if (matchb)
                     this.tcsr |= (byte) 0x80;
                 if ((this.tcr & 0x20) != 0 && (this.tcsr & 0x20) != 0)
                     mcu.interrupt.MCU_Interrupt_SetRequest(INTERRUPT_SOURCE_TIMER_OVI.ordinal(), true);

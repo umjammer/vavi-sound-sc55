@@ -34,10 +34,13 @@
 
 package vavi.sound.sc55;
 
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
+import static java.lang.System.getLogger;
 import static vavi.sound.sc55.Mcu.Status.STATUS_C;
 import static vavi.sound.sc55.Mcu.Status.STATUS_N;
 import static vavi.sound.sc55.Mcu.Status.STATUS_V;
@@ -54,6 +57,8 @@ import static vavi.sound.sc55.McuOpcodes.Operand.OPERAND_WORD;
 
 class McuOpcodes {
 
+    private static final Logger logger = getLogger(McuOpcodes.class.getName());
+
     private Mcu mcu;
 
     McuOpcodes(Mcu mcu) {
@@ -61,13 +66,14 @@ class McuOpcodes {
     }
 
     int MCU_SUB_Common(int t1, int t2, int c_bit, int siz) {
+//if (mcu.CC == 347) { System.err.printf("t1: %x, t2: %x, siz: %d, c_bit: %d, %n", t1, t2, siz, c_bit); }
         int st1, st2;
         boolean N, Z, C, V = false;
         if (siz != 0) {
             st1 = (short) t1;
             st2 = (short) t2;
-            t1 = (short) t1;
-            t2 = (short) t2;
+            t1 = t1 & 0xffff;
+            t2 = t2 & 0xffff;
             t1 -= t2;
             t1 -= c_bit;
             C = ((t1 >> 16) & 1) != 0;
@@ -83,8 +89,8 @@ class McuOpcodes {
         } else {
             st1 = (byte) t1;
             st2 = (byte) t2;
-            t1 = (byte) t1;
-            t2 = (byte) t2;
+            t1 = t1 & 0xff;
+            t2 = t2 & 0xff;
             t1 -= t2;
             t1 -= c_bit;
             C = ((t1 >> 8) & 1) != 0;
@@ -95,9 +101,10 @@ class McuOpcodes {
 
             st1 -= st2;
             st1 -= c_bit;
-            if (st1 < Byte.MIN_VALUE || st1 > java.lang.Byte.MAX_VALUE)
+            if (st1 < Byte.MIN_VALUE || st1 > Byte.MAX_VALUE)
                 V = true;
         }
+//if (mcu.CC == 347) { System.err.printf("t1: %x, t2: %x, st1: %x, st2: %x, siz: %d, c_bit: %d,  N:%s, C:%s, Z:%s, V:%s%n", t1, t2, st1, st2, siz, c_bit, N ? "+" : "-", C ? "+" : "-", Z ? "+" : "-", V ? "+" : "-"); }
         mcu.MCU_SetStatus(N, STATUS_N.v);
         mcu.MCU_SetStatus(Z, STATUS_Z.v);
         mcu.MCU_SetStatus(C, STATUS_C.v);
@@ -112,8 +119,8 @@ class McuOpcodes {
         if (siz != 0) {
             st1 = (short) t1;
             st2 = (short) t2;
-            t1 = (short) t1;
-            t2 = (short) t2;
+            t1 = t1 & 0xffff;
+            t2 = t2 & 0xffff;
             t1 += t2;
             t1 += c_bit;
             C = ((t1 >> 16) & 1) != 0;
@@ -129,8 +136,8 @@ class McuOpcodes {
         } else {
             st1 = (byte) t1;
             st2 = (byte) t2;
-            t1 = (byte) t1;
-            t2 = (byte) t2;
+            t1 = t1 & 0xff;
+            t2 = t2 & 0xff;
             t1 += t2;
             t1 += c_bit;
             C = ((t1 >> 8) & 1) != 0;
@@ -141,7 +148,7 @@ class McuOpcodes {
 
             st1 += st2;
             st1 += c_bit;
-            if (st1 < Byte.MIN_VALUE || st1 > java.lang.Byte.MAX_VALUE)
+            if (st1 < Byte.MIN_VALUE || st1 > Byte.MAX_VALUE)
                 V = true;
         }
         mcu.MCU_SetStatus(N, STATUS_N.v);
@@ -194,7 +201,7 @@ class McuOpcodes {
     }
 
     void MCU_STM(byte operand) {
-        byte rlist = mcu.MCU_ReadCodeAdvance();
+        int rlist = mcu.MCU_ReadCodeAdvance() & 0xff;
         int i;
         for (i = 7; i >= 0; i--) {
             if ((rlist & (1 << i)) != 0) {
@@ -207,9 +214,9 @@ class McuOpcodes {
     }
 
     void MCU_TRAPA(byte operand) {
-        int opcode = mcu.MCU_ReadCodeAdvance();
+        int opcode = mcu.MCU_ReadCodeAdvance() & 0xff;
         if ((opcode & 0xf0) == 0x10) {
-            mcu.MCU_Interrupt_TRAPA(opcode & 0x0f);
+            mcu.interrupt.MCU_Interrupt_TRAPA(opcode & 0x0f);
         } else {
             mcu.MCU_ErrorTrap();
         }
@@ -218,24 +225,22 @@ class McuOpcodes {
     void MCU_Jump_PJSR(byte operand) {
         int ocp = mcu.cp;
         int opc = mcu.pc;
-        byte page = mcu.MCU_ReadCodeAdvance();
-        short address;
-        address = (short) (mcu.MCU_ReadCodeAdvance() << 8);
-        address |= mcu.MCU_ReadCodeAdvance();
+        int page = mcu.MCU_ReadCodeAdvance() & 0xff;
+        int address = (mcu.MCU_ReadCodeAdvance() & 0xff) << 8;
+        address |= (mcu.MCU_ReadCodeAdvance() & 0xff);
         mcu.MCU_PushStack(mcu.pc);
         mcu.MCU_PushStack(mcu.cp);
-        mcu.cp = page;
+        mcu.cp = (byte) page;
         if (mcu.cp == 0x27)
             mcu.cp += 0;
-        mcu.pc = address;
+        mcu.pc = (short) address;
     }
 
     void MCU_Jump_JSR(byte operand) {
-        short address;
-        address = (short) (mcu.MCU_ReadCodeAdvance() << 8);
-        address |= mcu.MCU_ReadCodeAdvance();
+        int address = (mcu.MCU_ReadCodeAdvance() & 0xff) << 8;
+        address |= (mcu.MCU_ReadCodeAdvance() & 0xff);
         mcu.MCU_PushStack(mcu.pc);
-        mcu.pc = address;
+        mcu.pc = (short) address;
     }
 
     void MCU_Jump_RTE(byte operand) {
@@ -246,76 +251,77 @@ class McuOpcodes {
     }
 
     void MCU_Jump_Bcc(byte operand) {
-        short disp;
+        int disp;
         int cond;
-        int branch = 0;
-        int N, C, Z, V;
+        boolean branch = false;
+        boolean N, C, Z, V;
         if ((operand & 0x10) != 0) {
-            disp = (short) (mcu.MCU_ReadCodeAdvance() << 8);
-            disp |= mcu.MCU_ReadCodeAdvance();
+            disp = (mcu.MCU_ReadCodeAdvance() & 0xff) << 8;
+            disp |= (mcu.MCU_ReadCodeAdvance() & 0xff);
         } else {
-            disp = (byte) mcu.MCU_ReadCodeAdvance();
+            disp = mcu.MCU_ReadCodeAdvance();
         }
         cond = operand & 0x0f;
 
-        N = (mcu.sr & STATUS_N.v) != 0 ? 1 : 0;
-        C = (mcu.sr & STATUS_C.v) != 0 ? 1 : 0;
-        Z = (mcu.sr & STATUS_Z.v) != 0 ? 1 : 0;
-        V = (mcu.sr & STATUS_V.v) != 0 ? 1 : 0;
+        N = (mcu.sr & STATUS_N.v) != 0;
+        C = (mcu.sr & STATUS_C.v) != 0;
+        Z = (mcu.sr & STATUS_Z.v) != 0;
+        V = (mcu.sr & STATUS_V.v) != 0;
+//logger.log(Level.DEBUG, "disp: %04x, cond: %x, N:%s, C:%s, Z:%s, V:%s".formatted(disp & 0xffff, cond, N ? "+" : "-", C ? "+" : "-", Z ? "+" : "-", V ? "+" : "-"));
 
         switch (cond) {
             case 0x0: // BRA/BT
-                branch = 1;
+                branch = true;
                 break;
             case 0x1: // BRN/BF
-                branch = 0;
+                branch = false;
                 break;
             case 0x2: // BHI
-                branch = (C | Z) == 0 ? 1 : 0;
+                branch = !(C | Z);
                 break;
             case 0x3: // BLS
-                branch = (C | Z) == 1 ? 1 : 0;
+                branch = (C | Z);
                 break;
             case 0x4: // BCC/BHS
-                branch = C == 0 ? 1 : 0;
+                branch = !C;
                 break;
             case 0x5: // BCS/BLO
-                branch = C == 1 ? 1 : 0;
+                branch = C;
                 break;
             case 0x6: // BNE
-                branch = Z == 0 ? 1 : 0;
+                branch = !Z;
                 break;
             case 0x7: // BEQ
-                branch = Z == 1 ? 1 : 0;
+                branch = Z;
                 break;
             case 0x8: // BVC
-                branch = V == 0 ? 1 : 0;
+                branch = !V;
                 break;
             case 0x9: // BVS
-                branch = V == 1 ? 1 : 0;
+                branch = V;
                 break;
             case 0xa: // BPL
-                branch = N == 0 ? 1 : 0;
+                branch = !N;
                 break;
             case 0xb: // BMI
-                branch = N == 1 ? 1 : 0;
+                branch = N;
                 break;
             case 0xc: // BGE
-                branch = (N ^ V) == 0 ? 1 : 0;
+                branch = !(N ^ V);
                 break;
             case 0xd: // BLT
-                branch = (N ^ V) == 1 ? 1 : 0;
+                branch = (N ^ V);
                 break;
             case 0xe: // BGT
-                branch = (Z | (N ^ V)) == 0 ? 1 : 0;
+                branch = !(Z | (N ^ V));
                 break;
             case 0xf: // BLE
-                branch = (Z | (N ^ V)) == 1 ? 1 : 0;
+                branch = (Z | (N ^ V));
                 break;
         }
 
-        if (branch != 0) {
-            mcu.pc += disp;
+        if (branch) {
+            mcu.pc += (short) disp;
         }
     }
 
@@ -324,11 +330,11 @@ class McuOpcodes {
     }
 
     void MCU_Jump_RTD(byte operand) {
-        short imm = (byte) mcu.MCU_ReadCodeAdvance();
+        int imm = mcu.MCU_ReadCodeAdvance() & 0xff;
         mcu.pc = mcu.MCU_PopStack();
 
         if (operand == 0x14) {
-            mcu.r[7] += imm;
+            mcu.r[7] += (short) imm;
             if ((mcu.r[7] & 1) != 0)
                 mcu.MCU_ErrorTrap();
         } else if (operand == 0x1c) {
@@ -341,9 +347,9 @@ class McuOpcodes {
 
     void MCU_Jump_JMP(byte operand) {
         if (operand == 0x11) {
-            byte opcode = mcu.MCU_ReadCodeAdvance();
-            byte opcode_h = (byte) (opcode >> 3);
-            byte opcode_l = (byte) (opcode & 0x07);
+            int opcode = mcu.MCU_ReadCodeAdvance() & 0xff;
+            int opcode_h = opcode >>> 3;
+            int opcode_l = opcode & 0x07;
             if (opcode == 0x19) {
                 mcu.cp = (byte) mcu.MCU_PopStack();
                 mcu.pc = mcu.MCU_PopStack();
@@ -362,50 +368,50 @@ class McuOpcodes {
                 mcu.MCU_ErrorTrap();
             }
         } else if (operand == 0x01) {
-            byte opcode = mcu.MCU_ReadCodeAdvance();
-            byte reg = (byte) (opcode & 0x07);
+            int opcode = mcu.MCU_ReadCodeAdvance() & 0xff;
+            int reg = opcode & 0x07;
             opcode >>= 3;
             if (opcode == 0x17) {
-                short disp = (byte) mcu.MCU_ReadCodeAdvance();
+                int disp = mcu.MCU_ReadCodeAdvance();
                 mcu.r[reg]--;
-                if (mcu.r[reg] != 0xffff) {
-                    mcu.pc += disp;
+//if (mcu.CC == 283) { System.err.printf("mcu.r[%d] = %04x, disp: %04x, opcode: %02x%n", reg, mcu.r[reg] & 0xffff, disp & 0xffff, opcode & 0xff); }
+                if (mcu.r[reg] != (short) 0xffff) {
+                    mcu.pc += (short) disp;
                 }
             } else {
                 mcu.MCU_ErrorTrap();
             }
         } else if (operand == 0x10) {
-            int addr;
-            addr = mcu.MCU_ReadCodeAdvance() << 8;
-            addr |= mcu.MCU_ReadCodeAdvance();
+            int addr = (mcu.MCU_ReadCodeAdvance() & 0xff) << 8;
+            addr |= (mcu.MCU_ReadCodeAdvance() & 0xff);
             mcu.pc = (short) addr;
         } else if (operand == 0x06) {
-            byte opcode = mcu.MCU_ReadCodeAdvance();
-            byte reg = (byte) (opcode & 0x07);
+            int opcode = mcu.MCU_ReadCodeAdvance() & 0xff;
+            int reg = opcode & 0x07;
             opcode >>= 3;
             if (opcode == 0x17) {
-                short disp = (byte) mcu.MCU_ReadCodeAdvance();
+                int disp = mcu.MCU_ReadCodeAdvance();
                 boolean Z = (mcu.sr & STATUS_Z.v) != 0;
                 if (Z) {
                     mcu.r[reg]--;
-                    if (mcu.r[reg] != 0xffff) {
-                        mcu.pc += disp;
+                    if (mcu.r[reg] != (short) 0xffff) {
+                        mcu.pc += (short) disp;
                     }
                 }
             } else {
                 mcu.MCU_ErrorTrap();
             }
         } else if (operand == 0x07) {
-            byte opcode = mcu.MCU_ReadCodeAdvance();
-            byte reg = (byte) (opcode & 0x07);
+            int opcode = mcu.MCU_ReadCodeAdvance() & 0xff;
+            int reg = opcode & 0x07;
             opcode >>= 3;
             if (opcode == 0x17) {
-                short disp = (byte) mcu.MCU_ReadCodeAdvance();
-                int Z = (mcu.sr & STATUS_Z.v) != 0 ? 1 : 0;
-                if (Z == 0) {
+                int disp = mcu.MCU_ReadCodeAdvance();
+                boolean Z = (mcu.sr & STATUS_Z.v) != 0;
+                if (!Z) {
                     mcu.r[reg]--;
-                    if (mcu.r[reg] != 0xffff) {
-                        mcu.pc += disp;
+                    if (mcu.r[reg] != (short) 0xffff) {
+                        mcu.pc += (short) disp;
                     }
                 }
             } else {
@@ -417,25 +423,23 @@ class McuOpcodes {
     }
 
     void MCU_Jump_BSR(byte operand) {
-        short disp;
+        int disp;
         if (operand == 0x0e) {
-            disp = (byte) mcu.MCU_ReadCodeAdvance();
+            disp = mcu.MCU_ReadCodeAdvance();
         } else {
-            disp = (short) (mcu.MCU_ReadCodeAdvance() << 8);
-            disp |= mcu.MCU_ReadCodeAdvance();
+            disp = (mcu.MCU_ReadCodeAdvance() & 0xff) << 8;
+            disp |= (mcu.MCU_ReadCodeAdvance() & 0xff);
         }
         mcu.MCU_PushStack(mcu.pc);
-        mcu.pc += disp;
+        mcu.pc += (short) disp;
     }
 
     void MCU_Jump_PJMP(byte operand) {
-        byte page;
-        short address;
-        page = mcu.MCU_ReadCodeAdvance();
-        address = (short) (mcu.MCU_ReadCodeAdvance() << 8);
-        address |= mcu.MCU_ReadCodeAdvance();
-        mcu.cp = page;
-        mcu.pc = address;
+        int page = mcu.MCU_ReadCodeAdvance() & 0xff;
+        int address = (mcu.MCU_ReadCodeAdvance() & 0xff) << 8;
+        address |= (mcu.MCU_ReadCodeAdvance() & 0xff);
+        mcu.cp = (byte) page;
+        mcu.pc = (short) address;
     }
 
     int operand_type;
@@ -451,19 +455,19 @@ class McuOpcodes {
         switch (General.values()[operand_type]) {
             case GENERAL_DIRECT:
                 if (operand_size != 0)
-                    return mcu.r[operand_reg];
-                return mcu.r[operand_reg] & 0xff;
+                    return mcu.r[operand_reg] & 0xffff;
+                return mcu.r[operand_reg] & 0xff; // return byte size
             case GENERAL_INDIRECT:
             case GENERAL_ABSOLUTE:
                 if (operand_size != 0) {
                     if ((operand_ea & 1) != 0) {
                         mcu.interrupt.MCU_Interrupt_Exception(EXCEPTION_SOURCE_ADDRESS_ERROR.ordinal());
                     }
-                    return mcu.MCU_Read16(mcu.MCU_GetAddress(operand_ep, operand_ea));
+                    return mcu.MCU_Read16(mcu.MCU_GetAddress(operand_ep, operand_ea)) & 0xffff;
                 }
-                return mcu.MCU_Read(mcu.MCU_GetAddress(operand_ep, operand_ea));
+                return mcu.MCU_Read(mcu.MCU_GetAddress(operand_ep, operand_ea)) & 0xff;
             case GENERAL_IMMEDIATE:
-                return operand_data;
+                return operand_data & 0xffff;
         }
         return 0;
     }
@@ -472,7 +476,7 @@ class McuOpcodes {
         switch (General.values()[operand_type]) {
             case GENERAL_DIRECT:
                 if (operand_size != 0)
-                    mcu.r[operand_reg] = (short) data;
+                    mcu.r[operand_reg] = (short) (data & 0xffff);
                 else {
                     mcu.r[operand_reg] &= ~0xff;
                     mcu.r[operand_reg] |= (short) (data & 0xff);
@@ -506,7 +510,7 @@ class McuOpcodes {
         int addrpage = 0;
         int ea = 0;
         int ep = 0;
-        byte opcode;
+        int opcode;
         byte opcode_reg;
         if ((operand & 0x08) != 0)
             siz = OPERAND_WORD.ordinal();
@@ -522,13 +526,13 @@ class McuOpcodes {
                 break;
             case 0xe0:
                 type = GENERAL_INDIRECT.ordinal();
-                disp = (byte) mcu.MCU_ReadCodeAdvance();
+                disp = mcu.MCU_ReadCodeAdvance();
                 break;
             case 0xf0:
                 type = GENERAL_INDIRECT.ordinal();
-                disp = mcu.MCU_ReadCodeAdvance();
+                disp = mcu.MCU_ReadCodeAdvance() & 0xff;
                 disp <<= 8;
-                disp |= mcu.MCU_ReadCodeAdvance();
+                disp |= mcu.MCU_ReadCodeAdvance() & 0xff;
                 break;
             case 0xb0:
                 type = GENERAL_INDIRECT.ordinal();
@@ -541,24 +545,24 @@ class McuOpcodes {
             case 0x00:
                 if (reg == 5) {
                     type = GENERAL_ABSOLUTE.ordinal();
-                    addr = mcu.br << 8;
-                    addr |= mcu.MCU_ReadCodeAdvance();
+                    addr = (mcu.br & 0xff) << 8;
+                    addr |= mcu.MCU_ReadCodeAdvance() & 0xff;
                     addrpage = 0;
                 } else if (reg == 4) {
                     type = GENERAL_IMMEDIATE.ordinal();
-                    data = mcu.MCU_ReadCodeAdvance();
+                    data = mcu.MCU_ReadCodeAdvance() & 0xff;
                     if (siz != 0) {
                         data <<= 8;
-                        data |= mcu.MCU_ReadCodeAdvance();
+                        data |= mcu.MCU_ReadCodeAdvance() & 0xff;
                     }
                 }
                 break;
             case 0x10:
                 if (reg == 5) {
                     type = GENERAL_ABSOLUTE.ordinal();
-                    addr = mcu.MCU_ReadCodeAdvance() << 8;
-                    addr |= mcu.MCU_ReadCodeAdvance();
-                    addrpage = mcu.dp;
+                    addr = (mcu.MCU_ReadCodeAdvance() & 0xff) << 8;
+                    addr |= (mcu.MCU_ReadCodeAdvance() & 0xff);
+                    addrpage = mcu.dp & 0xff;
                 }
                 break;
         }
@@ -588,13 +592,13 @@ class McuOpcodes {
             ep = addrpage & 0xff;
         }
 
-        opcode = mcu.MCU_ReadCodeAdvance();
+        opcode = mcu.MCU_ReadCodeAdvance() & 0xff;
         opcode_extended = (byte) (opcode == 0x00 ? 1 : 0);
         if (opcode_extended != 0) {
-            opcode = mcu.MCU_ReadCodeAdvance();
+            opcode = mcu.MCU_ReadCodeAdvance() & 0xff;
         }
         opcode_reg = (byte) (opcode & 0x07);
-        opcode >>= 3;
+        opcode >>>= 3;
 
         operand_type = type;
         operand_ea = (short) ea;
@@ -604,7 +608,8 @@ class McuOpcodes {
         operand_data = (short) data;
         operand_status = 0;
 
-        MCU_Opcode_Table[opcode].accept(opcode, opcode_reg);
+//if (mcu.CC == 790) { System.err.printf("opcode: %02x, opcode_reg: %02x, operand_ea: %04x%n", opcode & 0xff, opcode_reg & 0xff, operand_ea & 0xffff); }
+        MCU_Opcode_Table[opcode].accept((byte) opcode, opcode_reg);
     }
 
     void MCU_SetStatusCommon(int val, int siz) {
@@ -626,48 +631,47 @@ class McuOpcodes {
 
     void MCU_Opcode_Short_MOVE(byte opcode) {
         int reg = opcode & 0x07;
-        byte data = mcu.MCU_ReadCodeAdvance();
+        int data = mcu.MCU_ReadCodeAdvance() & 0xff;
         mcu.r[reg] &= ~0xff;
-        mcu.r[reg] |= data;
+        mcu.r[reg] |= (short) (data & 0xff);
         MCU_SetStatusCommon(data, 0);
     }
 
     void MCU_Opcode_Short_MOVI(byte opcode) {
         int reg = opcode & 0x07;
-        short data;
-        data = (short) (mcu.MCU_ReadCodeAdvance() << 8);
-        data |= mcu.MCU_ReadCodeAdvance();
-        mcu.r[reg] = data;
+        int data = (mcu.MCU_ReadCodeAdvance() & 0xff) << 8;
+        data |= (mcu.MCU_ReadCodeAdvance() & 0xff);
+        mcu.r[reg] = (short) data;
         MCU_SetStatusCommon(data, 1);
     }
 
     void MCU_Opcode_Short_MOVF(byte opcode) {
         int reg = opcode & 0x07;
         int siz = (opcode & 0x08) != 0 ? 1 : 0;
-        byte disp = mcu.MCU_ReadCodeAdvance();
-        int addr = (mcu.r[6] + disp) & 0xffff;
+        int disp = mcu.MCU_ReadCodeAdvance();
+        int addr = ((mcu.r[6] & 0xffff) + disp) & 0xffff;
         addr |= mcu.tp << 16;
         if ((opcode & 0x10) == 0) {
-            short data;
+            int data;
             if (siz != 0) {
-                data = mcu.MCU_Read16(addr);
+                data = mcu.MCU_Read16(addr) & 0xffff;
                 mcu.r[reg] &= ~0xff;
-                mcu.r[reg] |= data;
+                mcu.r[reg] |= (short) data;
                 MCU_SetStatusCommon(data, 0);
             } else {
-                data = mcu.MCU_Read(addr);
-                mcu.r[reg] = data;
+                data = mcu.MCU_Read(addr) & 0xff;
+                mcu.r[reg] = (short) data;
                 MCU_SetStatusCommon(data, 1);
             }
         } else {
-            short data;
+            int data;
             if (siz != 0) {
-                data = (short) (mcu.r[reg] & 0xff);
+                data = mcu.r[reg] & 0xff;
                 mcu.MCU_Write(addr, (byte) data);
                 MCU_SetStatusCommon(data, 0);
             } else {
-                data = mcu.r[reg];
-                mcu.MCU_Write16(addr, data);
+                data = mcu.r[reg] & 0xffff;
+                mcu.MCU_Write16(addr, (short) data);
                 MCU_SetStatusCommon(data, 1);
             }
         }
@@ -675,39 +679,41 @@ class McuOpcodes {
 
     void MCU_Opcode_Short_MOVL(byte opcode) {
         int reg = opcode & 0x07;
-        int siz = (opcode & 0x08) != 0 ? 1 : 0;
-        short addr = (short) (mcu.br << 8);
+        boolean siz = (opcode & 0x08) != 0;
+        short addr = (short) ((mcu.br & 0xff) << 8);
         int data;
-        addr |= mcu.MCU_ReadCodeAdvance();
-        if (siz != 0) {
+        addr |= (short) (mcu.MCU_ReadCodeAdvance() & 0xff);
+        if (siz) {
             if ((addr & 1) != 0)
                 mcu.interrupt.MCU_Interrupt_Exception(EXCEPTION_SOURCE_ADDRESS_ERROR.ordinal());
-            data = mcu.MCU_Read16(addr);
+            data = mcu.MCU_Read16(addr & 0xffff) & 0xffff;
             mcu.r[reg] = (short) data;
+//if (mcu.CC == 344) { System.err.printf("mcu.r[%d] = %04x, data: %04x, opcode: %02x, addr: %04x%n", reg, mcu.r[reg] & 0xffff, data, opcode & 0xff, addr & 0xffff); }
             MCU_SetStatusCommon(data, 1);
         } else {
-            data = mcu.MCU_Read(addr);
+            data = mcu.MCU_Read(addr & 0xffff) & 0xff;
             mcu.r[reg] &= ~0xff;
-            mcu.r[reg] |= data;
+            mcu.r[reg] |= (short) data;
+//if (mcu.CC == 344) { System.err.printf("mcu.r[%d] = %04x, data: %04x, opcode: %02x, addr: %04x%n", reg, mcu.r[reg] & 0xffff, data, opcode & 0xff, addr & 0xffff); }
             MCU_SetStatusCommon(data, 0);
         }
     }
 
     void MCU_Opcode_Short_MOVS(byte opcode) {
         int reg = opcode & 0x07;
-        int siz = (opcode & 0x08) != 0 ? 1 : 0;
-        short addr = (short) (mcu.br << 8);
+        boolean siz = (opcode & 0x08) != 0;
+        short addr = (short) ((mcu.br & 0xff) << 8);
         int data;
-        addr |= mcu.MCU_ReadCodeAdvance();
-        if (siz != 0) {
+        addr |= (short) (mcu.MCU_ReadCodeAdvance() & 0xff);
+        if (siz) {
             if ((addr & 1) != 0)
                 mcu.interrupt.MCU_Interrupt_Exception(EXCEPTION_SOURCE_ADDRESS_ERROR.ordinal());
-            data = mcu.r[reg];
-            mcu.MCU_Write16((int) addr, (short) data);
+            data = mcu.r[reg] & 0xffff;
+            mcu.MCU_Write16(addr & 0xffff, (short) data);
             MCU_SetStatusCommon(data, 1);
         } else {
-            data = mcu.r[reg] & 0xff;
-            mcu.MCU_Write((int) addr, (byte) data);
+            data = mcu.r[reg] & 0xff; // byte size
+            mcu.MCU_Write(addr & 0xffff, (byte) data);
             MCU_SetStatusCommon(data, 0);
         }
     }
@@ -717,10 +723,10 @@ class McuOpcodes {
         int siz = (opcode & 0x08) != 0 ? 1 : 0;
         int t1, t2;
         if (siz != 0) {
-            t2 = mcu.MCU_ReadCodeAdvance() << 8;
-            t2 |= mcu.MCU_ReadCodeAdvance();
+            t2 = (mcu.MCU_ReadCodeAdvance() & 0xff) << 8;
+            t2 |= (mcu.MCU_ReadCodeAdvance() & 0xff);
         } else {
-            t2 = mcu.MCU_ReadCodeAdvance();
+            t2 = mcu.MCU_ReadCodeAdvance() & 0xff;
         }
         t1 = mcu.r[reg];
         MCU_SUB_Common(t1, t2, 0, siz);
@@ -733,37 +739,36 @@ class McuOpcodes {
     void MCU_Opcode_MOVG_Immediate(byte opcode, byte opcode_reg) {
         int data;
         if (opcode_reg == 6 && (operand_type == GENERAL_INDIRECT.ordinal() || operand_type == GENERAL_ABSOLUTE.ordinal())) {
-            data = (byte) mcu.MCU_ReadCodeAdvance();
+            data = mcu.MCU_ReadCodeAdvance() & 0xff;
             MCU_Operand_Write(data);
             MCU_SetStatusCommon(data, operand_size);
         } else if (opcode_reg == 7 && (operand_type == GENERAL_INDIRECT.ordinal() || operand_type == GENERAL_ABSOLUTE.ordinal())) {
-            data = mcu.MCU_ReadCodeAdvance() << 8;
-            data |= mcu.MCU_ReadCodeAdvance();
+            data = (mcu.MCU_ReadCodeAdvance() & 0xff) << 8;
+            data |= (mcu.MCU_ReadCodeAdvance() & 0xff);
             MCU_Operand_Write(data);
             MCU_SetStatusCommon(data, operand_size);
         } else if (opcode_reg == 4 && (operand_type == GENERAL_INDIRECT.ordinal() || operand_type == GENERAL_ABSOLUTE.ordinal()) && operand_size == Operand.OPERAND_BYTE.ordinal()) {
             int t1 = MCU_Operand_Read();
-            int t2 = mcu.MCU_ReadCodeAdvance();
+            int t2 = mcu.MCU_ReadCodeAdvance() & 0xff;
             MCU_SUB_Common(t1, t2, 0, Operand.OPERAND_BYTE.ordinal());
-        } else if (opcode_reg == 4 && (operand_type == GENERAL_INDIRECT.ordinal() || operand_type == GENERAL_ABSOLUTE.ordinal()) && operand_size == OPERAND_WORD.ordinal()) // FIXME
-        {
+        } else if (opcode_reg == 4 && (operand_type == GENERAL_INDIRECT.ordinal() || operand_type == GENERAL_ABSOLUTE.ordinal()) && operand_size == OPERAND_WORD.ordinal()) { // FIXME
             int t1 = MCU_Operand_Read();
-            int t2 = (short) mcu.MCU_ReadCodeAdvance();
+            int t2 = mcu.MCU_ReadCodeAdvance() & 0xff;
             MCU_SUB_Common(t1, t2, 0, OPERAND_WORD.ordinal());
         } else if (opcode_reg == 5 && (operand_type == GENERAL_INDIRECT.ordinal() || operand_type == GENERAL_ABSOLUTE.ordinal()) && operand_size == OPERAND_WORD.ordinal()) {
             int t1, t2;
             t1 = MCU_Operand_Read();
-            t2 = mcu.MCU_ReadCodeAdvance() << 8;
-            t2 |= mcu.MCU_ReadCodeAdvance();
+            t2 = (mcu.MCU_ReadCodeAdvance() & 0xff) << 8;
+            t2 |= (mcu.MCU_ReadCodeAdvance() & 0xff);
             MCU_SUB_Common(t1, t2, 0, OPERAND_WORD.ordinal());
-        } else if (opcode_reg == 5 && (operand_type == GENERAL_INDIRECT.ordinal() || operand_type == GENERAL_ABSOLUTE.ordinal()) && operand_size == OPERAND_BYTE.ordinal()) // FIXME
-        {
+        } else if (opcode_reg == 5 && (operand_type == GENERAL_INDIRECT.ordinal() || operand_type == GENERAL_ABSOLUTE.ordinal()) && operand_size == OPERAND_BYTE.ordinal()) { // FIXME
             int t1, t2;
             t1 = MCU_Operand_Read();
-            t2 = mcu.MCU_ReadCodeAdvance() << 8;
-            t2 |= mcu.MCU_ReadCodeAdvance();
+            t2 = (mcu.MCU_ReadCodeAdvance() & 0xff) << 8;
+            t2 |= (mcu.MCU_ReadCodeAdvance() & 0xff);
             MCU_SUB_Common(t1, t2, 0, OPERAND_BYTE.ordinal());
         } else {
+logger.log(Level.DEBUG, "opcode_reg: %d, operand_type: %s".formatted(opcode_reg, operand_type));
             mcu.MCU_ErrorTrap();
         }
     }
@@ -828,15 +833,15 @@ class McuOpcodes {
             MCU_SetStatusCommon(data, operand_size);
             mcu.MCU_SetStatus(false, STATUS_C.v);
         } else if (opcode_reg == 2 && operand_type == GENERAL_DIRECT.ordinal() && operand_size == 0) { // EXTU
-            int data = (byte) mcu.r[operand_reg];
+            int data = mcu.r[operand_reg] & 0xff; // byte size
             mcu.r[operand_reg] = (short) data;
             mcu.MCU_SetStatus(false, STATUS_N.v);
             mcu.MCU_SetStatus(data == 0, STATUS_Z.v);
             mcu.MCU_SetStatus(false, STATUS_V.v);
             mcu.MCU_SetStatus(false, STATUS_C.v);
         } else if (opcode_reg == 0 && operand_type == GENERAL_DIRECT.ordinal() && operand_size == 0) { // SWAP
-            int data = mcu.r[operand_reg];
-            int data_h = data >> 8;
+            int data = mcu.r[operand_reg] & 0xffff;
+            int data_h = (data >> 8) & 0xff;
             int data_l = data & 0xff;
             data = (data_l << 8) | data_h;
             mcu.r[operand_reg] = (short) data;
@@ -852,7 +857,7 @@ class McuOpcodes {
             data = MCU_SUB_Common(0, data, 0, operand_size);
             MCU_Operand_Write(data);
         } else if (opcode_reg == 1 && operand_type == GENERAL_DIRECT.ordinal() && operand_size == 0) { // EXTS
-            int data = mcu.r[operand_reg];
+            int data = mcu.r[operand_reg] & 0xff; // byte size
             mcu.r[operand_reg] = (byte) data;
             MCU_SetStatusCommon(data, OPERAND_WORD.ordinal());
         } else {
@@ -909,15 +914,15 @@ class McuOpcodes {
             if (d) {
                 if (operand_type == GENERAL_DIRECT.ordinal()) { // XCH
                     if (operand_size != 0) {
-                        int r1 = mcu.r[opcode_reg];
-                        int r2 = mcu.r[operand_reg];
+                        int r1 = mcu.r[opcode_reg] & 0xffff;
+                        int r2 = mcu.r[operand_reg] & 0xffff;
                         mcu.r[opcode_reg] = (short) r2;
                         mcu.r[operand_reg] = (short) r1;
                     } else {
                         mcu.MCU_ErrorTrap();
                     }
                 } else {
-                    data = mcu.r[opcode_reg];
+                    data = mcu.r[opcode_reg] & 0xffff;
                     MCU_Operand_Write(data);
                     MCU_SetStatusCommon(data, operand_size);
                 }
@@ -938,6 +943,7 @@ class McuOpcodes {
         if (operand_type != GENERAL_IMMEDIATE.ordinal()) {
             int data = MCU_Operand_Read();
             int bit = opcode_reg | ((opcode & 1) << 3);
+//logger.log(Level.DEBUG, "data: %02x, bit: %02x".formatted(data & 0xff, bit & 0xff));
             mcu.MCU_SetStatus((data & (1 << bit)) == 0, STATUS_Z.v);
         } else {
             mcu.MCU_ErrorTrap();
@@ -963,7 +969,7 @@ class McuOpcodes {
     }
 
     void MCU_Opcode_CMP(byte opcode, byte opcode_reg) {
-        int t1 = mcu.r[opcode_reg];
+        int t1 = mcu.r[opcode_reg] & 0xffff;
         int t2 = MCU_Operand_Read();
         MCU_SUB_Common(t1, t2, 0, operand_size);
     }
@@ -993,7 +999,7 @@ class McuOpcodes {
     }
 
     void MCU_Opcode_ADD(byte opcode, byte opcode_reg) {
-        int t1 = mcu.r[opcode_reg];
+        int t1 = mcu.r[opcode_reg] & 0xffff;
         int t2 = MCU_Operand_Read();
         t1 = MCU_ADD_Common(t1, t2, 0, operand_size);
         if (operand_size != 0)
@@ -1005,7 +1011,7 @@ class McuOpcodes {
     }
 
     void MCU_Opcode_SUB(byte opcode, byte opcode_reg) {
-        int t1 = mcu.r[opcode_reg];
+        int t1 = mcu.r[opcode_reg] & 0xffff;
         int t2 = MCU_Operand_Read();
         t1 = MCU_SUB_Common(t1, t2, 0, operand_size);
         if (operand_size != 0)
@@ -1017,7 +1023,7 @@ class McuOpcodes {
     }
 
     void MCU_Opcode_SUBS(byte opcode, byte opcode_reg) {
-        int t1 = mcu.r[opcode_reg];
+        int t1 = mcu.r[opcode_reg] & 0xffff;
         int t2 = MCU_Operand_Read();
         if (operand_size != 0)
             mcu.r[opcode_reg] = (short) (t1 - t2);
@@ -1026,7 +1032,7 @@ class McuOpcodes {
     }
 
     void MCU_Opcode_AND(byte opcode, byte opcode_reg) {
-        int data = mcu.r[opcode_reg];
+        int data = mcu.r[opcode_reg] & 0xffff;
         data &= MCU_Operand_Read();
         if (operand_size != 0)
             mcu.r[opcode_reg] = (short) data;
@@ -1126,7 +1132,7 @@ class McuOpcodes {
 
     void MCU_Opcode_MULXU(byte opcode, byte opcode_reg) {
         int t1 = MCU_Operand_Read();
-        int t2 = mcu.r[opcode_reg];
+        int t2 = mcu.r[opcode_reg] & 0xffff;
         boolean N, Z;
         if (operand_size == 0)
             t2 &= 0xff;
@@ -1134,9 +1140,9 @@ class McuOpcodes {
 
         if (operand_size != 0) {
             opcode_reg &= ~1;
-            mcu.r[opcode_reg | 0] = (short) (t1 >> 16);
+            mcu.r[opcode_reg | 0] = (short) (t1 >>> 16);
             mcu.r[opcode_reg | 1] = (short) t1;
-            N = (t1 & 0x80000000L) != 0; // FIXME
+            N = (t1 & 0x8000_0000L) != 0; // FIXME
         } else {
             t1 &= 0xffff;
             mcu.r[opcode_reg] = (short) t1;
@@ -1165,8 +1171,8 @@ class McuOpcodes {
 
         if (operand_size != 0) {
             opcode_reg &= ~1;
-            t2 = mcu.r[opcode_reg | 0] << 16;
-            t2 |= mcu.r[opcode_reg | 1];
+            t2 = (mcu.r[opcode_reg | 0] & 0xffff) << 16;
+            t2 |= (mcu.r[opcode_reg | 1] & 0xffff);
 
             R = t2 % t1;
             Q = t2 / t1;
@@ -1188,7 +1194,7 @@ class McuOpcodes {
             R = t2 % t1;
             Q = t2 / t1;
 
-            if (Q > 0xffff) {
+            if (Q > (short) 0xffff) {
                 mcu.MCU_SetStatus(false, STATUS_N.v);
                 mcu.MCU_SetStatus(false, STATUS_Z.v);
                 mcu.MCU_SetStatus(true, STATUS_V.v);
@@ -1217,7 +1223,7 @@ class McuOpcodes {
     }
 
     void MCU_Opcode_ADDX(byte opcode, byte opcode_reg) {
-        int t1 = mcu.r[opcode_reg];
+        int t1 = mcu.r[opcode_reg] & 0xffff;
         int t2 = MCU_Operand_Read();
         int C = (mcu.sr & STATUS_C.v) != 0 ? 1 : 0;
         int Z = (mcu.sr & STATUS_Z.v) != 0 ? 1 : 0;
@@ -1234,7 +1240,7 @@ class McuOpcodes {
     }
 
     void MCU_Opcode_SUBX(byte opcode, byte opcode_reg) {
-        int t1 = mcu.r[opcode_reg];
+        int t1 = mcu.r[opcode_reg] & 0xffff;
         int t2 = MCU_Operand_Read();
         int C = (mcu.sr & STATUS_C.v) != 0 ? 1 : 0;
         t1 = MCU_SUB_Common(t1, t2, C, operand_size);
