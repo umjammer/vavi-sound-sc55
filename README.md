@@ -5,17 +5,41 @@
 
 # vavi-sound-sc55
 
+<img alt="image" src="src/test/resources/sc.jpg" width="200" /> &nbsp;&nbsp;<sub><a href="https://www.roland.com/">© Roland</a></sub>
+
 Roland SC-55 emulator, by nukeykt.
 
 ## Install
+
+### application
+
+ * [maven](https://jitpack.io/#umjammer/vavi-sound-sc55)
+
+### roms
+
+```shell
+$ mkdir somewhere/roms
+$ cp rom1.bin rom2.bin rom_sm.bin waverom1.nim waverom2.nim somewhere/roms/
+```
+
+### system property
+
+```shell
+-Dsc55.dir=somewhere/roms
+```
 
 ## Usage
 
 ## References
 
  * https://github.com/nukeykt/Nuked-SC55/
- * https://archive.org/details/rsc-55roms
  * https://github.com/shingo45endo/sc55mk2-ctf-patcher
+ * [rtmidi](https://www.music.mcgill.ca/~gary/rtmidi/)
+
+### romz
+
+  * https://archive.org/details/rsc-55roms
+  * https://archive.org/download/jv880_rompack_v1
 
 ## TODO
 
