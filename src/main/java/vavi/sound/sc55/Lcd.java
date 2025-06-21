@@ -88,6 +88,8 @@ class Lcd {
     }
 
     void LCD_Write(int address, byte data) {
+//System.err.printf("%10d: %02x %02x%n", mcu.CC, address, data);
+//if (mcu.CC++ > 6000) { System.exit(1); }
         if (address == 0) {
             if ((data & 0xe0) == 0x20) {
                 LCD_DL = (data & 0x10) != 0;
@@ -130,8 +132,10 @@ class Lcd {
                         if ((LCD_DD_RAM & 0x3f) < 40)
                             LCD_Data[(LCD_DD_RAM & 0x3f) + 40] = data;
                     } else {
-                        if ((LCD_DD_RAM & 0x3f) < 40)
+                        if ((LCD_DD_RAM & 0x3f) < 40) {
                             LCD_Data[LCD_DD_RAM & 0x3f] = data;
+//if (LCD_DD_RAM == 0 && data == 0x31) { new Exception("LCD_Write").printStackTrace(); }
+                        }
                     }
                 } else {
                     if (LCD_DD_RAM < 80)
@@ -555,20 +559,20 @@ logger.log(Level.DEBUG, "key: " + b + ", " + isDown);
 //                                    bend = 0x3fff;
 //                                MCU_PostUART(0xe1);
 //                                MCU_PostUART(bend & 127);
-//                                MCU_PostUART((bend >> 7) & 127);
+//                                MCU_PostUART((bend >>> 7) & 127);
 //                            } else if (kk == 2) {
 //                                bend -= 0x100;
 //                                if (bend < 0)
 //                                    bend = 0;
 //                                MCU_PostUART(0xe1);
 //                                MCU_PostUART(bend & 127);
-//                                MCU_PostUART((bend >> 7) & 127);
+//                                MCU_PostUART((bend >>> 7) & 127);
 //                            } else if (kk) {
 //                                MCU_PostUART(0xc1);
 //                                MCU_PostUART(patch);
 //                                MCU_PostUART(0xe1);
 //                                MCU_PostUART(bend & 127);
-//                                MCU_PostUART((bend >> 7) & 127);
+//                                MCU_PostUART((bend >>> 7) & 127);
 //                                MCU_PostUART(0x91);
 //                                MCU_PostUART(0x32);
 //                                MCU_PostUART(0x7f);

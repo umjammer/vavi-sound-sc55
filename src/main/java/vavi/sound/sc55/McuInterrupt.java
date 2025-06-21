@@ -119,7 +119,7 @@ class McuInterrupt {
     }
 
     void MCU_Interrupt_SetRequest(int interrupt, boolean value) {
-//if (interrupt == 12) { System.err.printf("%d: interrupt: %x, value: %s%n", mcu.CC - 1, interrupt, value); }
+if (interrupt == 19) { System.err.printf("%d: interrupt: %x, value: %s%n", mcu.CC - 1, interrupt, value); }
         mcu.interrupt_pending[interrupt] = value;
     }
 
@@ -135,14 +135,14 @@ class McuInterrupt {
 
     void MCU_Interrupt_TRAPA(int vector) {
 //{ System.err.printf("%d: vector: %x%n", mcu.CC - 1, vector); }
-        mcu.trapa_pending[vector] = 1;
+        mcu.trapa_pending[vector] = true;
     }
 
     void MCU_Interrupt_StartVector(int vector, int mask) {
         int address = mcu.MCU_GetVectorAddress(vector);
-//if (mcu.CC >= 57540) { System.err.printf("address: %x, vector: %x, mask: %x%n", address, vector, mask); }
+if (vector == VECTOR_INTERNAL_INTERRUPT_D4.ordinal()) { System.err.printf("address: %x, vector: %x, mask: %x%n", address, vector, mask); }
         MCU_Interrupt_Start(mask);
-        mcu.cp = (byte) (address >> 16);
+        mcu.cp = (byte) (address >>> 16);
         mcu.pc = (short) address;
     }
 
@@ -163,8 +163,8 @@ class McuInterrupt {
 //#endif
         int i;
         for (i = 0; i < 16; i++) {
-            if (mcu.trapa_pending[i] != 0) {
-                mcu.trapa_pending[i] = 0;
+            if (mcu.trapa_pending[i]) {
+                mcu.trapa_pending[i] = false;
                 MCU_Interrupt_StartVector(VECTOR_TRAPA_0.ordinal() + i, -1);
                 return;
             }
@@ -201,73 +201,73 @@ class McuInterrupt {
                     if ((mcu.dev_register[DEV_P1CR.v] & 0x20) == 0)
                         continue;
                     vector = VECTOR_IRQ0;
-                    level = (mcu.dev_register[DEV_IPRA.v] >> 4) & 7;
+                    level = (mcu.dev_register[DEV_IPRA.v] >>> 4) & 7;
                     break;
                 case INTERRUPT_SOURCE_IRQ1:
                     if ((mcu.dev_register[DEV_P1CR.v] & 0x40) == 0)
                         continue;
                     vector = VECTOR_IRQ1;
-                    level = (mcu.dev_register[DEV_IPRA.v] >> 0) & 7;
+                    level = (mcu.dev_register[DEV_IPRA.v] >>> 0) & 7;
                     break;
                 case INTERRUPT_SOURCE_FRT0_OCIA:
                     vector = VECTOR_INTERNAL_INTERRUPT_94;
-                    level = (mcu.dev_register[DEV_IPRB.v] >> 4) & 7;
+                    level = (mcu.dev_register[DEV_IPRB.v] >>> 4) & 7;
                     break;
                 case INTERRUPT_SOURCE_FRT0_OCIB:
                     vector = VECTOR_INTERNAL_INTERRUPT_98;
-                    level = (mcu.dev_register[DEV_IPRB.v] >> 4) & 7;
+                    level = (mcu.dev_register[DEV_IPRB.v] >>> 4) & 7;
                     break;
                 case INTERRUPT_SOURCE_FRT0_FOVI:
                     vector = VECTOR_INTERNAL_INTERRUPT_9C;
-                    level = (mcu.dev_register[DEV_IPRB.v] >> 4) & 7;
+                    level = (mcu.dev_register[DEV_IPRB.v] >>> 4) & 7;
                     break;
                 case INTERRUPT_SOURCE_FRT1_OCIA:
                     vector = VECTOR_INTERNAL_INTERRUPT_A4;
-                    level = (mcu.dev_register[DEV_IPRB.v] >> 0) & 7;
+                    level = (mcu.dev_register[DEV_IPRB.v] >>> 0) & 7;
                     break;
                 case INTERRUPT_SOURCE_FRT1_OCIB:
                     vector = VECTOR_INTERNAL_INTERRUPT_A8;
-                    level = (mcu.dev_register[DEV_IPRB.v] >> 0) & 7;
+                    level = (mcu.dev_register[DEV_IPRB.v] >>> 0) & 7;
                     break;
                 case INTERRUPT_SOURCE_FRT1_FOVI:
                     vector = VECTOR_INTERNAL_INTERRUPT_AC;
-                    level = (mcu.dev_register[DEV_IPRB.v] >> 0) & 7;
+                    level = (mcu.dev_register[DEV_IPRB.v] >>> 0) & 7;
                     break;
                 case INTERRUPT_SOURCE_FRT2_OCIA:
                     vector = VECTOR_INTERNAL_INTERRUPT_B4;
-                    level = (mcu.dev_register[DEV_IPRC.v] >> 4) & 7;
+                    level = (mcu.dev_register[DEV_IPRC.v] >>> 4) & 7;
                     break;
                 case INTERRUPT_SOURCE_FRT2_OCIB:
                     vector = VECTOR_INTERNAL_INTERRUPT_B8;
-                    level = (mcu.dev_register[DEV_IPRC.v] >> 4) & 7;
+                    level = (mcu.dev_register[DEV_IPRC.v] >>> 4) & 7;
                     break;
                 case INTERRUPT_SOURCE_FRT2_FOVI:
                     vector = VECTOR_INTERNAL_INTERRUPT_BC;
-                    level = (mcu.dev_register[DEV_IPRC.v] >> 4) & 7;
+                    level = (mcu.dev_register[DEV_IPRC.v] >>> 4) & 7;
                     break;
                 case INTERRUPT_SOURCE_TIMER_CMIA:
                     vector = VECTOR_INTERNAL_INTERRUPT_C0;
-                    level = (mcu.dev_register[DEV_IPRC.v] >> 0) & 7;
+                    level = (mcu.dev_register[DEV_IPRC.v] >>> 0) & 7;
                     break;
                 case INTERRUPT_SOURCE_TIMER_CMIB:
                     vector = VECTOR_INTERNAL_INTERRUPT_C4;
-                    level = (mcu.dev_register[DEV_IPRC.v] >> 0) & 7;
+                    level = (mcu.dev_register[DEV_IPRC.v] >>> 0) & 7;
                     break;
                 case INTERRUPT_SOURCE_TIMER_OVI:
                     vector = VECTOR_INTERNAL_INTERRUPT_C8;
-                    level = (mcu.dev_register[DEV_IPRC.v] >> 0) & 7;
+                    level = (mcu.dev_register[DEV_IPRC.v] >>> 0) & 7;
                     break;
                 case INTERRUPT_SOURCE_ANALOG:
                     vector = VECTOR_INTERNAL_INTERRUPT_E0;
-                    level = (mcu.dev_register[DEV_IPRD.v] >> 0) & 7;
+                    level = (mcu.dev_register[DEV_IPRD.v] >>> 0) & 7;
                     break;
                 case INTERRUPT_SOURCE_UART_RX:
                     vector = VECTOR_INTERNAL_INTERRUPT_D4;
-                    level = (mcu.dev_register[DEV_IPRD.v] >> 4) & 7;
+                    level = (mcu.dev_register[DEV_IPRD.v] >>> 4) & 7;
                     break;
                 case INTERRUPT_SOURCE_UART_TX:
                     vector = VECTOR_INTERNAL_INTERRUPT_D8;
-                    level = (mcu.dev_register[DEV_IPRD.v] >> 4) & 7;
+                    level = (mcu.dev_register[DEV_IPRD.v] >>> 4) & 7;
                     break;
                 default:
                     break;

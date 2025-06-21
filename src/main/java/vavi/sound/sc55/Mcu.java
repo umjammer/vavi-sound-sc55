@@ -258,7 +258,7 @@ public class Mcu {
     boolean ex_ignore;
     int exception_pending;
     boolean[] interrupt_pending = new boolean[INTERRUPT_SOURCE_MAX.ordinal()];
-    byte[] trapa_pending = new byte[16];
+    boolean[] trapa_pending = new boolean[16];
     long cycles;
 //    }
 
@@ -304,10 +304,10 @@ public class Mcu {
 
     int MCU_GetPageForRegister(int reg) {
         if (reg >= 6)
-            return this.tp;
+            return this.tp & 0xff;
         else if (reg >= 4)
-            return this.ep;
-        return this.dp;
+            return this.ep & 0xff;
+        return this.dp & 0xff;
     }
 
     void MCU_ControlRegisterWrite(int reg, int siz, int data) {
@@ -585,7 +585,7 @@ public class Mcu {
     private SourceDataLine audioOut;
 
     void MCU_ErrorTrap() {
-        logger.log(Level.DEBUG, "cp: %2x pc: %4x".formatted(this.cp, this.pc), new Exception("MCU_ErrorTrap"));
+        logger.log(Level.DEBUG, "cp: %2x pc: %4x".formatted(this.cp & 0xff, this.pc & 0xffff), new Exception("MCU_ErrorTrap"));
     }
 
     boolean mcu_mk1 = false; // 0 - SC-55mkII, SC-55ST. 1 - SC-55, CM-300/SCC-1
@@ -669,7 +669,7 @@ READ_RCU:
                 if (pin == 7) {
                     if (mcu_mk1)
                         return (short) ANALOG_LEVEL_BATTERY.v;
-                    switch ((io_sd >> 2) & 3) {
+                    switch ((io_sd >>> 2) & 3) {
                         case 0: // Battery voltage
                             return (short) ANALOG_LEVEL_BATTERY.v;
                         case 1: // NC
@@ -705,7 +705,7 @@ READ_RCU:
     void MCU_AnalogSample(int channel) {
         int value = MCU_AnalogReadPin(channel) & 0xffff;
         int dest = (channel << 1) & 6;
-        dev_register[DEV_ADDRAH.v + dest] = (byte) (value >> 2);
+        dev_register[DEV_ADDRAH.v + dest] = (byte) (value >>> 2);
         dev_register[DEV_ADDRAL.v + dest] = (byte) ((value << 6) & 0xc0);
     }
 
@@ -715,8 +715,8 @@ READ_RCU:
 
     int ssr_rd = 0;
 
-    int uart_write_ptr;
-    int uart_read_ptr;
+    AtomicInteger uart_write_ptr = new AtomicInteger();
+    AtomicInteger uart_read_ptr = new AtomicInteger();
     byte[] uart_buffer = new byte[uart_buffer_size];
 
     private byte uart_rx_byte;
@@ -868,11 +868,11 @@ READ_RCU:
                 int button_pressed = mcu_button_pressed.get();
 
                 if (io_sd == (byte) 0b1111_1011)
-                    data &= (byte) (((button_pressed >>> 0) & 0b1_1111) ^ 0xFF);
+                    data &= (byte) (((button_pressed >>> 0) & 0b1_1111) ^ 0xff);
                 if (io_sd == (byte) 0b1111_0111)
-                    data &= (byte) (((button_pressed >>> 5) & 0b1_1111) ^ 0xFF);
+                    data &= (byte) (((button_pressed >>> 5) & 0b1_1111) ^ 0xff);
                 if (io_sd == (byte) 0b1110_1111)
-                    data &= (byte) (((button_pressed >>> 10) & 0b1111) ^ 0xFF);
+                    data &= (byte) (((button_pressed >>> 10) & 0b1111) ^ 0xff);
 
                 data |= (byte) 0b1000_0000;
                 return data;
@@ -955,8 +955,8 @@ READ_RCU:
         int address_rom = address & 0x3_ffff;
         if ((address & 0x8_0000) != 0 && !mcu_jv880)
             address_rom |= 0x4_0000;
-        byte page = (byte) ((address >> 16) & 0xf);
-if (CC == 800) { System.err.printf("address: %08x, address_rom: %04x, rom2_mask: %04x, page: %02x%n", address, address_rom, rom2_mask, page); }
+        byte page = (byte) ((address >>> 16) & 0xf);
+//if (CC == 800) { System.err.printf("address: %08x, address_rom: %04x, rom2_mask: %04x, page: %02x%n", address, address_rom, rom2_mask, page); }
         address &= 0xffff;
         byte ret = (byte) 0xff;
         switch (page) {
@@ -1123,7 +1123,7 @@ if (CC == 800) { System.err.printf("address: %08x, address_rom: %04x, rom2_mask:
     }
 
     void MCU_Write(int address, byte value) {
-        int page = (address >> 16) & 0xf;
+        int page = (address >>> 16) & 0xf;
         address &= 0xffff;
         if (page == 0) {
             if ((address & 0x8000) != 0) {
@@ -1208,7 +1208,7 @@ if (CC == 800) { System.err.printf("address: %08x, address_rom: %04x, rom2_mask:
 
     void MCU_Write16(int address, short value) {
         address &= ~1;
-        MCU_Write(address, (byte) (value >> 8));
+        MCU_Write(address, (byte) (value >>> 8));
         MCU_Write(address + 1, (byte) (value & 0xff));
     }
 
@@ -1249,7 +1249,7 @@ int CC = 0;
         this.br = 0;
 
         int reset_address = MCU_GetVectorAddress(VECTOR_RESET.ordinal());
-        this.cp = (byte) ((reset_address >> 16) & 0xff);
+        this.cp = (byte) ((reset_address >>> 16) & 0xff);
         this.pc = (short) (reset_address & 0xffff);
 
         this.exception_pending = -1;
@@ -1262,15 +1262,15 @@ int CC = 0;
     }
 
     public void MCU_PostUART(byte data) {
-        uart_buffer[uart_write_ptr] = data;
-logger.log(Level.DEBUG, "%02x, %d".formatted(data & 0xff, uart_write_ptr));
-        uart_write_ptr = (uart_write_ptr + 1) % uart_buffer_size;
+        uart_buffer[uart_write_ptr.get()] = data;
+logger.log(Level.DEBUG, "%02x, %d".formatted(data & 0xff, uart_write_ptr.get()));
+        uart_write_ptr.set((uart_write_ptr.get() + 1) % uart_buffer_size);
     }
 
     void MCU_UpdateUART_RX() {
         if ((dev_register[Dev.DEV_SCR.v] & 16) == 0) // RX disabled
             return;
-        if (uart_write_ptr == uart_read_ptr) // no byte
+        if (uart_write_ptr.get() == uart_read_ptr.get()) // no byte
             return;
 
         if ((dev_register[DEV_SSR.v] & 0x40) != 0)
@@ -1279,8 +1279,8 @@ logger.log(Level.DEBUG, "%02x, %d".formatted(data & 0xff, uart_write_ptr));
         if (this.cycles < uart_rx_delay)
             return;
 
-        uart_rx_byte = uart_buffer[uart_read_ptr];
-        uart_read_ptr = (uart_read_ptr + 1) % uart_buffer_size;
+        uart_rx_byte = uart_buffer[uart_read_ptr.get()];
+        uart_read_ptr.set((uart_read_ptr.get() + 1) % uart_buffer_size);
         dev_register[DEV_SSR.v] |= 0x40;
         interrupt.MCU_Interrupt_SetRequest(INTERRUPT_SOURCE_UART_RX.ordinal(), (dev_register[Dev.DEV_SCR.v] & 0x40) != 0);
     }
@@ -1467,12 +1467,13 @@ logger.log(Level.DEBUG, "thread end");
         }
     }
 
+    // sdl callback len is 512
     public void audio_output() {
 try {
         int len = Math.min(1024, audio_buffer_size - sample_read_ptr);
         ByteBuffer bb = ByteBuffer.allocate(len * Short.BYTES).order(ByteOrder.LITTLE_ENDIAN);
         ShortBuffer sb = bb.asShortBuffer();
-        sb.get(sample_buffer, sample_read_ptr, len);
+        sb.put(sample_buffer, sample_read_ptr, len);
 //logger.log(Level.DEBUG, "audio_buffer_size: %d, sample_read_ptr: %d, audio output: %d".formatted(audio_buffer_size, sample_read_ptr, len));
         audioOut.write(bb.array(), 0, len * Short.BYTES);
         sample_read_ptr += len;

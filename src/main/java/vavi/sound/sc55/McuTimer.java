@@ -176,16 +176,16 @@ class McuTimer {
             }
             case REG_FRCH:
                 timer_tempreg = (byte) (timer.frc & 0xff);
-                return (byte) (timer.frc >> 8);
+                return (byte) (timer.frc >>> 8);
             case REG_OCRAH:
                 timer_tempreg = (byte) (timer.ocra & 0xff);
-                return (byte) (timer.ocra >> 8);
+                return (byte) (timer.ocra >>> 8);
             case REG_OCRBH:
                 timer_tempreg = (byte) (timer.ocrb & 0xff);
-                return (byte) (timer.ocrb >> 8);
+                return (byte) (timer.ocrb >>> 8);
             case REG_ICRH:
                 timer_tempreg = (byte) (timer.icr & 0xff);
-                return (byte) (timer.icr >> 8);
+                return (byte) (timer.icr >>> 8);
             case REG_FRCL:
             case REG_OCRAL:
             case REG_OCRBL:
@@ -289,7 +289,7 @@ class McuTimer {
                     value = 0;
                 else
                     value++;
-                int of = (value >> 16) & 1;
+                int of = (value >>> 16) & 1;
                 value &= 0xffff;
                 timer.frc = (short) value;
 
@@ -350,7 +350,7 @@ class McuTimer {
                     value = 0;
                 else
                     value++;
-                int of = (value >> 8) & 1;
+                int of = (value >>> 8) & 1;
                 value &= 0xff;
                 this.tcnt = (byte) value;
 

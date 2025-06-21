@@ -100,7 +100,7 @@ class SubMcu {
     byte s;
     byte sr;
     long cycles;
-    byte sleep;
+    boolean sleep;
 //    }
 
     enum SmVector {
@@ -169,8 +169,8 @@ class SubMcu {
     byte sm_cts;
 
     long sm_timer_cycles;
-    byte sm_timer_prescaler;
-    byte sm_timer_counter;
+    int sm_timer_prescaler;
+    int sm_timer_counter;
 
     Mcu mcu;
 
@@ -221,15 +221,15 @@ class SubMcu {
                 case SM_DEV_P1_DIR:
                     return sm_p1_dir;
                 case SM_DEV_PRESCALER:
-                    return sm_timer_prescaler;
+                    return (byte) sm_timer_prescaler;
                 case SM_DEV_TIMER:
-                    return sm_timer_counter;
+                    return (byte) sm_timer_counter;
             }
             return sm_device_mode[address];
         } else if (address >= 0x200 && address < 0x2c0) {
             address &= 0xff;
-            if ((sm_device_mode[SM_DEV_RAM_DIR.v] & (1 << (address >> 5))) != 0)
-                sm_access[(address & 0xffff) >> 3] &= (byte) ~(1 << (address & 7));
+            if ((sm_device_mode[SM_DEV_RAM_DIR.v] & (1 << (address >>> 5))) != 0)
+                sm_access[(address & 0xffff) >>> 3] &= (byte) ~(1 << (address & 7));
             return sm_shared_ram[address];
         } else {
             logger.log(Level.DEBUG, "sm: unknown read %x".formatted(address));
@@ -280,7 +280,7 @@ class SubMcu {
                         && (sm_device_mode[SM_DEV_UART3_CTRL.v] & 0x20) == 0);
         } else if (address >= 0x200 && address < 0x2c0) {
             address &= 0xff;
-            sm_access[address >> 3] |= (byte) (1 << (address & 7));
+            sm_access[address >>> 3] |= (byte) (1 << (address & 7));
             sm_shared_ram[address] = data;
         } else {
             logger.log(Level.DEBUG, "sm: unknown write %x %x".formatted(address, data));
@@ -291,7 +291,7 @@ class SubMcu {
         address &= 0xff;
         if (address < 0xc0) {
             address &= 0xff;
-            sm_access[address >> 3] |= (byte) (1 << (address & 7));
+            sm_access[address >>> 3] |= (byte) (1 << (address & 7));
             sm_shared_ram[address] = data;
         } else if (address >= 0xf8 && address < 0xfc) {
             sm_device_mode[SM_DEV_IPCM0.v + (address & 3)] = data;
@@ -316,8 +316,8 @@ class SubMcu {
     byte SM_SysRead(int address) {
         address &= 0xff;
         if (address < 0xc0) {
-            if ((sm_device_mode[SM_DEV_RAM_DIR.v] & (1 << (address >> 5))) == 0)
-                sm_access[address >> 3] &= (byte) ~(1 << (address & 7));
+            if ((sm_device_mode[SM_DEV_RAM_DIR.v] & (1 << (address >>> 5))) == 0)
+                sm_access[address >>> 3] &= (byte) ~(1 << (address & 7));
             return sm_shared_ram[address];
         } else if (address >= 0xf8 && address < 0xfc) {
             if ((address & 3) == 0) {
@@ -341,9 +341,9 @@ class SubMcu {
     }
 
     short SM_GetVectorAddress(int vector) {
-        short pc = (short) (SM_Read((short) (0x1fec + vector * 2)) & 0xff);
-        pc |= (short) (SM_Read((short) (0x1fec + vector * 2 + 1)) << 8);
-        return pc;
+        int pc = SM_Read((short) (0x1fec + vector * 2)) & 0xff;
+        pc |= (SM_Read((short) (0x1fec + vector * 2 + 1)) & 0xff) << 8;
+        return (short) pc;
     }
 
     void SM_SetStatus(int condition, int mask) {
@@ -364,15 +364,15 @@ class SubMcu {
     }
 
     short SM_ReadAdvance16() {
-        short word = (short) (SM_ReadAdvance() & 0xff);
-        word |= (short) ((SM_ReadAdvance() & 0xff) << 8);
-        return word;
+        int word = SM_ReadAdvance() & 0xff;
+        word |= (SM_ReadAdvance() & 0xff) << 8;
+        return (short) word;
     }
 
     short SM_Read16(short address) {
-        short word = (short) (SM_Read(address) & 0xff);
-        word |= (short) ((SM_Read(address) & 0xff) << 8);
-        return word;
+        int word = SM_Read(address) & 0xff;
+        word |= (SM_Read(address) & 0xff) << 8;
+        return (short) word;
     }
 
     void SM_Update_NZ(byte val) {
@@ -381,13 +381,13 @@ class SubMcu {
     }
 
     void SM_PushStack(byte data) {
-        SM_Write(this.s, data);
+        SM_Write((short) (this.s & 0xff), data);
         this.s--;
     }
 
     byte SM_PopStack() {
         this.s++;
-        return SM_Read(this.s);
+        return SM_Read((short) (this.s & 0xff));
     }
 
     void SM_Opcode_NotImplemented(byte opcode) {
@@ -502,8 +502,8 @@ class SubMcu {
 
     void SM_Opcode_BBC_BBS(byte opcode) {
         int zp = (opcode & 4) != 0 ? 1 : 0;
-        int bit = (opcode >> 5) & 7;
-        int type = (opcode >> 4) & 1;
+        int bit = (opcode >>> 5) & 7;
+        int type = (opcode >>> 4) & 1;
         byte val = 0;
 
         if (zp == 0) {
@@ -514,7 +514,7 @@ class SubMcu {
 
         byte diff = SM_ReadAdvance(); // signed
 
-        int set = (val >> bit) & 1;
+        int set = (val >>> bit) & 1;
 
         if (set != type)
             this.pc += diff;
@@ -622,7 +622,7 @@ class SubMcu {
     }
 
     void SM_Opcode_STP(byte opcode) { // 42
-        this.sleep = 1;
+        this.sleep = true;
     }
 
     void SM_Opcode_PHA(byte opcode) { // 48
@@ -631,8 +631,8 @@ class SubMcu {
 
     void SM_Opcode_SEB_CLB(byte opcode) {
         int zp = (opcode & 4) != 0 ? 1 : 0;
-        int bit = (opcode >> 5) & 7;
-        int type = (opcode >> 4) & 1;
+        int bit = (opcode >>> 5) & 7;
+        int type = (opcode >>> 4) & 1;
         byte val = 0;
         byte dest = 0;
 
@@ -685,7 +685,7 @@ class SubMcu {
                 break;
         }
 
-        SM_PushStack((byte) ((this.pc & 0xffff) >> 8));
+        SM_PushStack((byte) ((this.pc & 0xffff) >>> 8));
         SM_PushStack((byte) (this.pc & 0xff));
         this.pc = newpc;
     }
@@ -1220,12 +1220,12 @@ class SubMcu {
     ).toArray(Consumer[]::new);
 
     void SM_StartVector(int vector) {
-        SM_PushStack((byte) (this.pc >> 8));
+        SM_PushStack((byte) (this.pc >>> 8));
         SM_PushStack((byte) (this.pc & 0xff));
         SM_PushStack(this.sr);
 
         this.sr |= (byte) SM_STATUS_I.v;
-        this.sleep = 0;
+        this.sleep = false;
 
         this.pc = SM_GetVectorAddress(vector);
     }
@@ -1302,12 +1302,12 @@ class SubMcu {
 
     void SM_UpdateTimer() {
         while (sm_timer_cycles < this.cycles) {
-            if ((sm_device_mode[SM_DEV_TIMER_CTRL.v] & 0x20) == 0 && this.sleep == 0) {
+            if ((sm_device_mode[SM_DEV_TIMER_CTRL.v] & 0x20) == 0 && !this.sleep) {
                 if (sm_timer_prescaler == 0) {
-                    sm_timer_prescaler = sm_device_mode[SM_DEV_PRESCALER.v];
+                    sm_timer_prescaler = sm_device_mode[SM_DEV_PRESCALER.v] & 0xff;
 
                     if (sm_timer_counter == 0) {
-                        sm_timer_counter = sm_device_mode[SM_DEV_TIMER.v];
+                        sm_timer_counter = sm_device_mode[SM_DEV_TIMER.v] & 0xff;
                         sm_device_mode[SM_DEV_INT_REQUEST.v] |= 0x8;
                     } else
                         sm_timer_counter--;
@@ -1321,7 +1321,7 @@ class SubMcu {
     void SM_UpdateUART() {
         if ((sm_device_mode[SM_DEV_UART1_CTRL.v] & 4) == 0) // RX disabled
             return;
-        if (mcu.uart_write_ptr == mcu.uart_read_ptr) // no byte
+        if (mcu.uart_write_ptr.get() == mcu.uart_read_ptr.get()) // no byte
             return;
 
         if (uart_rx_gotbyte != 0)
@@ -1330,8 +1330,8 @@ class SubMcu {
         if (this.cycles < uart_rx_delay)
             return;
 
-        uart_rx_byte = mcu.uart_buffer[mcu.uart_read_ptr];
-        mcu.uart_read_ptr = (mcu.uart_read_ptr + 1) % Mcu.uart_buffer_size;
+        uart_rx_byte = mcu.uart_buffer[mcu.uart_read_ptr.get()];
+        mcu.uart_read_ptr.set((mcu.uart_read_ptr.get() + 1) % Mcu.uart_buffer_size);
         uart_rx_gotbyte = 1;
         sm_device_mode[SM_DEV_INT_REQUEST.v] |= 0x40;
 
@@ -1342,7 +1342,7 @@ class SubMcu {
         while (this.cycles < cycles * 5) {
             SM_HandleInterrupt();
 
-            if (this.sleep == 0) {
+            if (!this.sleep) {
                 byte opcode = SM_ReadAdvance();
 
                 SM_Opcode_Table[opcode & 0xff].accept(opcode);
