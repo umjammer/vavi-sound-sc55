@@ -1105,10 +1105,10 @@ if (List.of(5900, 5901, 5902).contains(mcu.CC)) { System.err.printf("opcode_reg:
             int msb;
             if (operand_size != 0) {
                 msb = data & 0x8000;
-                data &= 0x7fff;
+                data &= 0xffff;
             } else {
                 msb = data & 0x80;
-                data &= 0x7f;
+                data &= 0xff;
             }
             data >>>= 1;
             data |= msb;
