@@ -621,7 +621,7 @@ class Pcm {
 
             { // global counter for envelopes
                 if (this.nfs == 0)
-                    this.tv_counter = this.ram2[31][8] & 0xffff; // fixme
+                    this.tv_counter = this.ram2[31][8]; // fixme
 
                 this.tv_counter -= 1;
 
@@ -1326,11 +1326,11 @@ class Pcm {
 
                 int reg1 = ram1[1];
                 int reg3 = ram1[3];
-                int reg2_6 = (ram2[6] >> 8) & 127;
+                int reg2_6 = ((ram2[6] & 0xffff) >> 8) & 127;
 
                 test = addclip20(test, step2 >> 1, step2 & 1);
 
-                int filter = ram2[11];
+                int filter = ram2[11] & 0xffff;
                 int v3;
 
                 if (mcu.mcu_mk1) {
@@ -1395,9 +1395,9 @@ class Pcm {
                 int[] volmul1 = new int[1];
                 int[] volmul2 = new int[1];
 
-                calc_tv(0, ram2[3], ram2, 9, active, volmul1);
-                calc_tv(1, ram2[4], ram2, 10, active, volmul2);
-                calc_tv(2, ram2[5], ram2, 11, active, null);
+                calc_tv(0, ram2[3] & 0xffff, ram2, 9, active, volmul1);
+                calc_tv(1, ram2[4] & 0xffff, ram2, 10, active, volmul2);
+                calc_tv(2, ram2[5] & 0xffff, ram2, 11, active, null);
 
                 // if (volmul1 && volmul2)
                 //     volmul1 += 0;
@@ -1415,8 +1415,8 @@ class Pcm {
 
                 int sample3 = addclip20(multiv3 >> 6, multiv4 >> 13, ((multiv4 >> 12) | (multiv3 >> 5)) & 1);
 
-                int pan = active ? ram2[1] : 0;
-                int rc = active ? ram2[2] : 0;
+                int pan = active ? (ram2[1] & 0xffff) : 0;
+                int rc = active ? (ram2[2] & 0xffff) : 0;
 
                 int sampl = multi(sample3, (byte) ((pan >> 8) & 255));
                 int sampr = multi(sample3, (byte) ((pan >> 0) & 255));

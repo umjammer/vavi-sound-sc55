@@ -19,7 +19,7 @@ import javax.sound.midi.Synthesizer;
 import javax.sound.midi.SysexMessage;
 import javax.sound.midi.Transmitter;
 
-import vavi.sound.midi.MidiUtil.MidiMatcher;
+//import vavi.sound.midi.MidiUtil.MidiMatcher;
 import vavi.sound.midi.Sc55Synthesizer;
 import vavi.sound.sc55.Mcu;
 import vavi.util.Debug;
@@ -33,7 +33,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
-import static vavi.sound.midi.MidiUtil.getMidiDevice;
+//import static vavi.sound.midi.MidiUtil.getMidiDevice;
 import static vavi.sound.sc55.LcdFont.lcd_font;
 
 
@@ -123,72 +123,72 @@ Debug.println("volume: " + volume + ", sc55.dir: " + System.getProperty("sc55.di
         Mcu.main(new String[] {});
     }
 
-    @Test
-    @DisplayName("connect specified input device to the synthesizer")
-    @EnabledIfSystemProperty(named = "vavi.test", matches = "ide")
-    void test2() throws Exception {
-
-        Info info = getMidiDevice(new MidiMatcher(inName, inVendor, inDescription, null), true);
-        MidiDevice device =  MidiSystem.getMidiDevice(info);
-Debug.println("---- " + info +" (" + device.getClass().getName() + ")" + " ----");
-Debug.println("name      : " + info.getName());
-Debug.println("vendor    : " + info.getVendor());
-Debug.println("descriptor: " + info.getDescription());
-Debug.println("version   : " + info.getVersion());
-        device.open();
-
-        // Now, display strings from synthInfos list in GUI.
-
-        Synthesizer synthesizer = new Sc55Synthesizer();
-Debug.println("synthesizer: " + synthesizer);
-        synthesizer.open();
-        Receiver receiver = synthesizer.getReceiver();
-        Transmitter transmitter = device.getTransmitter();
-
-        transmitter.setReceiver(new Receiver() {
-            @Override
-            public void send(MidiMessage message, long timeStamp) {
-                if (message instanceof ShortMessage shortMessage) {
-                    int channel = shortMessage.getChannel();
-                    int command = shortMessage.getCommand();
-                    int data1 = shortMessage.getData1();
-                    int data2 = shortMessage.getData2();
-Debug.printf("short: command: %02x, channel: %d, data1: %d, data2: %d", command, channel, data1, data2);
-                    switch (command) {
-                        case ShortMessage.NOTE_OFF:
-                            break;
-                        case ShortMessage.NOTE_ON:
-                            break;
-                        case ShortMessage.POLY_PRESSURE:
-                            break;
-                        case ShortMessage.CONTROL_CHANGE:
-                            break;
-                        case ShortMessage.PROGRAM_CHANGE:
-                            break;
-                        case ShortMessage.CHANNEL_PRESSURE:
-                            break;
-                        case ShortMessage.PITCH_BEND:
-                            break;
-                    }
-                } else if (message instanceof SysexMessage sysexMessage) {
-                    byte[] data = sysexMessage.getData();
-Debug.println("sysex: %02X\n%s".formatted(sysexMessage.getStatus(), StringUtil.getDump(data, 32)));
-                } else if (message instanceof MetaMessage metaMessage) {
-Debug.println("meta: %02x".formatted(metaMessage.getType()));
-                } else {
-                    assert false;
-                }
-
-                receiver.send(message, timeStamp);
-            }
-
-            @Override
-            public void close() {
-            }
-        });
-
-        CountDownLatch cdl = new CountDownLatch(1);
-Debug.println("waiting...");
-        cdl.await();
-    }
+//    @Test
+//    @DisplayName("connect specified input device to the synthesizer")
+//    @EnabledIfSystemProperty(named = "vavi.test", matches = "ide")
+//    void test2() throws Exception {
+//
+//        Info info = getMidiDevice(new MidiMatcher(inName, inVendor, inDescription, null), true);
+//        MidiDevice device =  MidiSystem.getMidiDevice(info);
+//Debug.println("---- " + info +" (" + device.getClass().getName() + ")" + " ----");
+//Debug.println("name      : " + info.getName());
+//Debug.println("vendor    : " + info.getVendor());
+//Debug.println("descriptor: " + info.getDescription());
+//Debug.println("version   : " + info.getVersion());
+//        device.open();
+//
+//        // Now, display strings from synthInfos list in GUI.
+//
+//        Synthesizer synthesizer = new Sc55Synthesizer();
+//Debug.println("synthesizer: " + synthesizer);
+//        synthesizer.open();
+//        Receiver receiver = synthesizer.getReceiver();
+//        Transmitter transmitter = device.getTransmitter();
+//
+//        transmitter.setReceiver(new Receiver() {
+//            @Override
+//            public void send(MidiMessage message, long timeStamp) {
+//                if (message instanceof ShortMessage shortMessage) {
+//                    int channel = shortMessage.getChannel();
+//                    int command = shortMessage.getCommand();
+//                    int data1 = shortMessage.getData1();
+//                    int data2 = shortMessage.getData2();
+//Debug.printf("short: command: %02x, channel: %d, data1: %d, data2: %d", command, channel, data1, data2);
+//                    switch (command) {
+//                        case ShortMessage.NOTE_OFF:
+//                            break;
+//                        case ShortMessage.NOTE_ON:
+//                            break;
+//                        case ShortMessage.POLY_PRESSURE:
+//                            break;
+//                        case ShortMessage.CONTROL_CHANGE:
+//                            break;
+//                        case ShortMessage.PROGRAM_CHANGE:
+//                            break;
+//                        case ShortMessage.CHANNEL_PRESSURE:
+//                            break;
+//                        case ShortMessage.PITCH_BEND:
+//                            break;
+//                    }
+//                } else if (message instanceof SysexMessage sysexMessage) {
+//                    byte[] data = sysexMessage.getData();
+//Debug.println("sysex: %02X\n%s".formatted(sysexMessage.getStatus(), StringUtil.getDump(data, 32)));
+//                } else if (message instanceof MetaMessage metaMessage) {
+//Debug.println("meta: %02x".formatted(metaMessage.getType()));
+//                } else {
+//                    assert false;
+//                }
+//
+//                receiver.send(message, timeStamp);
+//            }
+//
+//            @Override
+//            public void close() {
+//            }
+//        });
+//
+//        CountDownLatch cdl = new CountDownLatch(1);
+//Debug.println("waiting...");
+//        cdl.await();
+//    }
 }

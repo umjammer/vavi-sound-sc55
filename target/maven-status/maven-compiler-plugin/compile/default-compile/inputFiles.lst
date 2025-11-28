@@ -1,0 +1,11 @@
+/app/src/main/java/vavi/sound/midi/Sc55Soundbank.java
+/app/src/main/java/vavi/sound/midi/Sc55Synthesizer.java
+/app/src/main/java/vavi/sound/sc55/Lcd.java
+/app/src/main/java/vavi/sound/sc55/LcdFont.java
+/app/src/main/java/vavi/sound/sc55/Mcu.java
+/app/src/main/java/vavi/sound/sc55/McuInterrupt.java
+/app/src/main/java/vavi/sound/sc55/McuOpcodes.java
+/app/src/main/java/vavi/sound/sc55/McuTimer.java
+/app/src/main/java/vavi/sound/sc55/Midi.java
+/app/src/main/java/vavi/sound/sc55/Pcm.java
+/app/src/main/java/vavi/sound/sc55/SubMcu.java
