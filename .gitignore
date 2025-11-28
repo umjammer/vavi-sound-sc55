@@ -84,3 +84,4 @@ CMakeSettings.json
 /assets/
 tmp/
 local.properties
+/target/
