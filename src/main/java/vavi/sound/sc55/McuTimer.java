@@ -342,8 +342,8 @@ class McuTimer {
             }
             if (timer_step != 0) {
                 int value = this.tcnt & 0xff;
-                boolean matcha = value == (this.tcora & 0xffff);
-                boolean matchb = value == (this.tcorb & 0xffff);
+                boolean matcha = value == (this.tcora & 0xff);
+                boolean matchb = value == (this.tcorb & 0xff);
                 if ((this.tcr & 24) == 8 && matcha)
                     value = 0;
                 else if ((this.tcr & 24) == 16 && matchb)

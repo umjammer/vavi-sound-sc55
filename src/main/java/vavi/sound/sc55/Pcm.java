@@ -1079,7 +1079,7 @@ class Pcm {
                 boolean b15 = (ram2[8] & 0x8000) != 0; // 0
                 boolean b6 = (ram2[7] & 0x40) != 0; // 1
                 boolean b7 = (ram2[7] & 0x80) != 0; // 1
-                int hiaddr = (ram2[7] >> 8) & 15; // 1
+                int hiaddr = ((ram2[7] & 0xffff) >> 8) & 15; // 1
                 int old_nibble = ((ram2[7] & 0xffff) >> 12) & 15; // 1
 
                 int address = ram1[4]; // 0

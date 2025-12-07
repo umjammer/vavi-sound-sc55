@@ -514,7 +514,7 @@ class SubMcu {
 
         byte diff = SM_ReadAdvance(); // signed
 
-        int set = (val >>> bit) & 1;
+        int set = ((val& 0xff) >>> bit) & 1;
 
         if (set != type)
             this.pc += diff;
@@ -1220,7 +1220,7 @@ class SubMcu {
     ).toArray(Consumer[]::new);
 
     void SM_StartVector(int vector) {
-        SM_PushStack((byte) (this.pc >>> 8));
+        SM_PushStack((byte) ((this.pc & 0xffff) >>> 8));
         SM_PushStack((byte) (this.pc & 0xff));
         SM_PushStack(this.sr);
 

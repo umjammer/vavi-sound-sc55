@@ -579,8 +579,8 @@ public class Mcu {
     private int audio_page_size;
     private short[] sample_buffer;
 
-    private int sample_read_ptr;
-    private int sample_write_ptr;
+    private volatile int sample_read_ptr;
+    private volatile int sample_write_ptr;
 
     private SourceDataLine audioOut;
 
@@ -882,10 +882,10 @@ READ_RCU:
                 if (!mcu_mk1)
                     cfg = mcu_sc155 ? 0 : 2; // bit 1: 0 - SC-155mk2 (???), 1 - SC-55mk2
 
-                int dir = dev_register[Dev.DEV_P9DDR.v];
+                int dir = dev_register[Dev.DEV_P9DDR.v] & 0xff;
 
                 int val = cfg & (dir ^ 0xff);
-                val |= dev_register[Dev.DEV_P9DR.v] & dir;
+                val |= (dev_register[Dev.DEV_P9DR.v] & 0xff) & dir;
                 return (byte) val;
             }
             case DEV_SCR:
