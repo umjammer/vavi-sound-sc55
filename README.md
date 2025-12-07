@@ -35,6 +35,7 @@ $ cp rom1.bin rom2.bin rom_sm.bin waverom1.nim waverom2.nim somewhere/roms/
  * https://github.com/nukeykt/Nuked-SC55/
  * https://github.com/shingo45endo/sc55mk2-ctf-patcher
  * [rtmidi](https://www.music.mcgill.ca/~gary/rtmidi/)
+ * https://github.com/skjelten/emusc
 
 ### romz
 
