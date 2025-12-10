@@ -39,9 +39,6 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.ShortBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -50,8 +47,8 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioSystem;
@@ -580,8 +577,8 @@ public class Mcu {
     private int audio_page_size;
     private short[] sample_buffer;
 
-    private volatile int sample_read_ptr;
-    private volatile int sample_write_ptr;
+    public AtomicInteger sample_read_ptr = new AtomicInteger(0);
+    public AtomicInteger sample_write_ptr = new AtomicInteger(0);
 
     private SourceDataLine audioOut;
 
@@ -1345,18 +1342,30 @@ try {
         MCU_WorkThread_Lock();
 
         while (work_thread_run) {
+            // 1. Align Write Pointer
+            int sample_write_ptr_ = sample_write_ptr.get();
             if ((pcm.config_reg_3c & 0x40) != 0)
-                sample_write_ptr &= ~3;
+                sample_write_ptr_ &= ~3;
             else
-                sample_write_ptr &= ~1;
-            if (sample_read_ptr == sample_write_ptr) {
+                sample_write_ptr_ &= ~1;
+            sample_write_ptr.set(sample_write_ptr_);
+
+            // 2. Check if Buffer is FULL (Standard Circular Logic)
+            int next_write_ptr = (sample_write_ptr_ + 4) % audio_buffer_size;
+            int r = sample_read_ptr.get();
+
+            if (next_write_ptr == r) {
                 MCU_WorkThread_Unlock();
-                while (sample_read_ptr == sample_write_ptr) {
-                    try { Thread.sleep(1); } catch (InterruptedException ignored) {}
+                // Wait for the Audio Thread to make space
+                while (next_write_ptr == r && work_thread_run) {
+                    // 0.1ms wait. Fast enough to catch up, slow enough to save CPU.
+                    LockSupport.parkNanos(100_000);
+                    r = sample_read_ptr.get();
                 }
                 MCU_WorkThread_Lock();
             }
 
+            // ... (Keep existing logic: interrupts, instructions, etc.) ...
             if (!this.ex_ignore)
                 interrupt.MCU_Interrupt_Handle();
             else
@@ -1491,59 +1500,121 @@ logger.log(Level.DEBUG, "thread end");
     }
 
     // sdl callback len is 512
-    public void audio_output() {
-try {
-        int len = Math.min(1024, audio_buffer_size - sample_read_ptr);
-        ByteBuffer bb = ByteBuffer.allocate(len * Short.BYTES).order(ByteOrder.LITTLE_ENDIAN);
-        ShortBuffer sb = bb.asShortBuffer();
-        sb.put(sample_buffer, sample_read_ptr, len);
-//logger.log(Level.DEBUG, "audio_buffer_size: %d, sample_read_ptr: %d, audio output: %d".formatted(audio_buffer_size, sample_read_ptr, len));
-        audioOut.write(bb.array(), 0, len * Short.BYTES);
-        sample_read_ptr += len;
-        sample_read_ptr %= audio_buffer_size;
-} catch (Throwable t) {
- logger.log(Level.ERROR, t.getMessage(), t);
-}
+    public void audioLoop() {
+        final double INPUT_RATE = (mcu_mk1 || mcu_jv880) ? 64000.0 : 66207.0;
+        final double OUTPUT_RATE = 44100.0;
+        final double STEP = INPUT_RATE / OUTPUT_RATE;
+
+        final int OUTPUT_FRAMES = 512;
+        byte[] outBytes = new byte[OUTPUT_FRAMES * 2 * 2];
+        double pos = 0.0;
+
+        while (work_thread_run) {
+            try {
+                int r = sample_read_ptr.get();
+                int w = sample_write_ptr.get();
+
+                // Calculate how much valid data is actually in the buffer
+                int available = (w >= r) ? w - r : audio_buffer_size - r + w;
+
+                // --- 1. RESAMPLE & READ ---
+                int outIdx = 0;
+                for (int i = 0; i < OUTPUT_FRAMES; i++) {
+                    int idx = (int) pos;
+                    double frac = pos - idx;
+
+                    short l0 = 0, r0 = 0, l1 = 0, r1 = 0;
+
+                    // CRITICAL: Only read if data exists!
+                    // If 'idx' points to data we haven't generated yet (underrun), use 0.
+                    // This prevents "Refraining" (echoing old data).
+                    if ((idx * 2) + 2 < available) {
+                        int idxL0 = (r + idx * 2) % audio_buffer_size;
+                        int idxR0 = (r + idx * 2 + 1) % audio_buffer_size;
+                        int idxL1 = (r + (idx + 1) * 2) % audio_buffer_size;
+                        int idxR1 = (r + (idx + 1) * 2 + 1) % audio_buffer_size;
+
+                        l0 = sample_buffer[idxL0];
+                        r0 = sample_buffer[idxR0];
+                        l1 = sample_buffer[idxL1];
+                        r1 = sample_buffer[idxR1];
+                    }
+                    // Else: l0, r0, etc. remain 0 (Silence)
+
+                    short outL = (short) (l0 + (l1 - l0) * frac);
+                    short outR = (short) (r0 + (r1 - r0) * frac);
+
+                    outBytes[outIdx++] = (byte) (outL & 0xff);
+                    outBytes[outIdx++] = (byte) ((outL >> 8) & 0xff);
+                    outBytes[outIdx++] = (byte) (outR & 0xff);
+                    outBytes[outIdx++] = (byte) ((outR >> 8) & 0xff);
+
+                    pos += STEP;
+                }
+
+                // --- 2. ADVANCE POINTER & CLEAR ---
+                int framesConsumed = (int) pos;
+                pos -= framesConsumed;
+                int samplesConsumed = framesConsumed * 2;
+
+                // We clear the buffer slots we theoretically consumed.
+                // Even if we played silence above, we must "consume" the empty space
+                // so the emulator knows it needs to fill it.
+                int clearPtr = r;
+                for (int k = 0; k < samplesConsumed; k++) {
+                    sample_buffer[clearPtr] = 0;
+                    clearPtr = (clearPtr + 1) % audio_buffer_size;
+                }
+
+                // ADVANCE! This unblocks the emulator immediately.
+                sample_read_ptr.set((r + samplesConsumed) % audio_buffer_size);
+
+                // --- 3. BLOCKING WRITE ---
+                // This call takes ~11.6ms.
+                // While this happens, the Emulator is running in parallel filling the buffer.
+                audioOut.write(outBytes, 0, outIdx);
+
+            } catch (Exception e) {
+                // Ignore
+            }
+        }
     }
 
     private final ExecutorService es = Executors.newSingleThreadExecutor(r -> {
-        Thread thread = new Thread(r);
-        thread.setPriority(Thread.MIN_PRIORITY);
+        Thread thread = new Thread(r, "Emulator Core");
+        thread.setPriority(Thread.MAX_PRIORITY); // Give emulator slightly higher priority
         return thread;
     });
 
-    private final ScheduledExecutorService ses = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread thread = new Thread(r);
-        thread.setPriority(Thread.MIN_PRIORITY);
+    private final ExecutorService ses = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "Audio Output");
+        thread.setPriority(Thread.NORM_PRIORITY);
         return thread;
     });
 
     int MCU_OpenAudio(int deviceIndex, int pageSize, int pageNum) {
-
-        audio_page_size = (pageSize / 2) * 2; // must be even
-        audio_buffer_size = audio_page_size * pageNum;
-logger.log(Level.DEBUG, "audio_buffer_size: " + audio_buffer_size);
+        audio_buffer_size = 16384;
 
         AudioFormat spec = new AudioFormat(
-                (mcu_mk1 || mcu_jv880) ? 64000 : 66207,
+                44100.0f,
                 16,
                 2,
                 true,
                 false);
 
         sample_buffer = new short[audio_buffer_size];
-        sample_read_ptr = 0;
-        sample_write_ptr = 0;
+        sample_read_ptr.set(0);
+        sample_write_ptr.set(0);
 
         String audioDevicename;
 
         try {
             audioOut = AudioSystem.getSourceDataLine(spec);
             audioDevicename = audioOut.getLineInfo().toString();
-            audioOut.open();
+            audioOut.open(spec, 4096);
             audioOut.start();
         } catch (LineUnavailableException e) {
-            logger.log(Level.DEBUG, "No audio output device found.");
+            logger.log(Level.ERROR, "No audio output device found.");
             return 0;
         }
 
@@ -1555,7 +1626,8 @@ logger.log(Level.DEBUG, "audio_buffer_size: " + audio_buffer_size);
                 (int) spec.getSampleRate(),
                 spec.getSampleSizeInBits()));
 
-        ses.scheduleAtFixedRate(this::audio_output, 0, 12, TimeUnit.MILLISECONDS);
+        work_thread_run = true;
+        ses.submit(this::audioLoop);
 
         return 1;
     }
@@ -1576,9 +1648,9 @@ logger.log(Level.DEBUG, "audio_buffer_size: " + audio_buffer_size);
             sample[1] = Short.MAX_VALUE;
         else if (sample[1] < Short.MIN_VALUE)
             sample[1] = Short.MIN_VALUE;
-        sample_buffer[sample_write_ptr + 0] = (short) sample[0];
-        sample_buffer[sample_write_ptr + 1] = (short) sample[1];
-        sample_write_ptr = (sample_write_ptr + 2) % audio_buffer_size;
+        sample_buffer[sample_write_ptr.get() + 0] = (short) sample[0];
+        sample_buffer[sample_write_ptr.get() + 1] = (short) sample[1];
+        sample_write_ptr.set((sample_write_ptr.get() + 2) % audio_buffer_size);
     }
 
     void MCU_GA_SetGAInt(int line, boolean value) {

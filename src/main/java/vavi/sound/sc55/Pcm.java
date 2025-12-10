@@ -257,7 +257,7 @@ class Pcm {
                 if ((address & 32) != 0)
                     ix |= 8;
 
-                this.read_latch = this.ram2[this.select_channel][ix];
+                this.read_latch = this.ram2[this.select_channel][ix] & 0xffff;
             }
         } else if (address >= 0x39 && address <= 0x3b) {
             switch (address & 3) {
