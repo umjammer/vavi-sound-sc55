@@ -184,7 +184,7 @@ class Lcd {
         button_map_sc55.put(KeyEvent.VK_I, MCU_BUTTON_KEY_SHIFT_L);
         button_map_sc55.put(KeyEvent.VK_O, MCU_BUTTON_KEY_SHIFT_R);
         button_map_sc55.put(KeyEvent.VK_P, MCU_BUTTON_LEVEL_L);
-        button_map_sc55.put(KeyEvent.VK_LEFT_PARENTHESIS, MCU_BUTTON_LEVEL_R);
+        button_map_sc55.put(KeyEvent.VK_OPEN_BRACKET, MCU_BUTTON_LEVEL_R);
         button_map_sc55.put(KeyEvent.VK_A, MCU_BUTTON_MIDI_CH_L);
         button_map_sc55.put(KeyEvent.VK_S, MCU_BUTTON_MIDI_CH_R);
         button_map_sc55.put(KeyEvent.VK_D, MCU_BUTTON_PAN_L);

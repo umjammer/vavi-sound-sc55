@@ -857,7 +857,7 @@ logger.log(Level.DEBUG, "opcode_reg: %d, operand_type: %s".formatted(opcode_reg,
             data = MCU_SUB_Common(0, data, 0, operand_size);
             MCU_Operand_Write(data);
         } else if (opcode_reg == 1 && operand_type == GENERAL_DIRECT.ordinal() && operand_size == 0) { // EXTS
-            int data = mcu.r[operand_reg];
+            int data = mcu.r[operand_reg] & 0xffff;
             mcu.r[operand_reg] = (byte) data;
             MCU_SetStatusCommon(data, OPERAND_WORD.ordinal());
         } else {

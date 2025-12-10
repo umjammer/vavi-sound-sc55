@@ -274,6 +274,31 @@ class Pcm {
     }
 
     void PCM_Reset() {
+        for (int i = 0; i < 32; i++) {
+            java.util.Arrays.fill(this.ram1[i], 0);
+            java.util.Arrays.fill(this.ram2[i], (short) 0);
+        }
+        java.util.Arrays.fill(this.eram, (short) 0);
+        java.util.Arrays.fill(this.rcsum, 0);
+
+        // Clear Primitives
+        this.select_channel = 0;
+        this.voice_mask = 0;
+        this.voice_mask_pending = 0;
+        this.voice_mask_updating = 0;
+        this.write_latch = 0;
+        this.wave_read_address = 0;
+        this.wave_byte_latch = 0;
+        this.read_latch = 0;
+        this.config_reg_3c = 0;
+        this.config_reg_3d = 0;
+        this.irq_channel = 0;
+        this.irq_assert = 0;
+        this.nfs = 0;
+        this.tv_counter = 0;
+        this.cycles = 0;
+        this.accum_l = 0;
+        this.accum_r = 0;
     }
 
     private int addclip20(int add1, int add2, int cin) {
@@ -355,58 +380,58 @@ class Pcm {
         boolean write = !active;
         int addlow = 0;
         if ((type & 4) != 0) {
-            if ((this.tv_counter & 8) == 0)
+            if ((this.tv_counter & 8) != 0)
                 addlow |= 1;
-            if ((this.tv_counter & 4) == 0)
+            if ((this.tv_counter & 4) != 0)
                 addlow |= 2;
-            if ((this.tv_counter & 2) == 0)
+            if ((this.tv_counter & 2) != 0)
                 addlow |= 4;
-            if ((this.tv_counter & 1) == 0)
+            if ((this.tv_counter & 1) != 0)
                 addlow |= 8;
             write |= true;
         } else {
             switch (type & 3) {
                 case 0:
-                    if ((this.tv_counter & 0x20) == 0)
+                    if ((this.tv_counter & 0x20) != 0)
                         addlow |= 1;
-                    if ((this.tv_counter & 0x10) == 0)
+                    if ((this.tv_counter & 0x10) != 0)
                         addlow |= 2;
-                    if ((this.tv_counter & 8) == 0)
+                    if ((this.tv_counter & 8) != 0)
                         addlow |= 4;
-                    if ((this.tv_counter & 4) == 0)
+                    if ((this.tv_counter & 4) != 0)
                         addlow |= 8;
                     write |= (this.tv_counter & 3) == 0;
                     break;
                 case 1:
-                    if ((this.tv_counter & 0x80) == 0)
+                    if ((this.tv_counter & 0x80) != 0)
                         addlow |= 1;
-                    if ((this.tv_counter & 0x40) == 0)
+                    if ((this.tv_counter & 0x40) != 0)
                         addlow |= 2;
-                    if ((this.tv_counter & 0x20) == 0)
+                    if ((this.tv_counter & 0x20) != 0)
                         addlow |= 4;
-                    if ((this.tv_counter & 0x10) == 0)
+                    if ((this.tv_counter & 0x10) != 0)
                         addlow |= 8;
                     write |= (this.tv_counter & 15) == 0;
                     break;
                 case 2:
-                    if ((this.tv_counter & 0x200) == 0)
+                    if ((this.tv_counter & 0x200) != 0)
                         addlow |= 1;
-                    if ((this.tv_counter & 0x100) == 0)
+                    if ((this.tv_counter & 0x100) != 0)
                         addlow |= 2;
-                    if ((this.tv_counter & 0x80) == 0)
+                    if ((this.tv_counter & 0x80) != 0)
                         addlow |= 4;
-                    if ((this.tv_counter & 0x40) == 0)
+                    if ((this.tv_counter & 0x40) != 0)
                         addlow |= 8;
                     write |= (this.tv_counter & 63) == 0;
                     break;
                 case 3:
-                    if ((this.tv_counter & 0x800) == 0)
+                    if ((this.tv_counter & 0x800) != 0)
                         addlow |= 1;
-                    if ((this.tv_counter & 0x400) == 0)
+                    if ((this.tv_counter & 0x400) != 0)
                         addlow |= 2;
-                    if ((this.tv_counter & 0x200) == 0)
+                    if ((this.tv_counter & 0x200) != 0)
                         addlow |= 4;
-                    if ((this.tv_counter & 0x100) == 0)
+                    if ((this.tv_counter & 0x100) != 0)
                         addlow |= 8;
                     write |= (this.tv_counter & 127) == 0;
                     break;

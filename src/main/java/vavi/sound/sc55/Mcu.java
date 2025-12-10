@@ -45,6 +45,7 @@ import java.nio.ShortBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -1226,6 +1227,28 @@ int CC = 0;
     }
 
     void MCU_Init() {
+        Arrays.fill(this.r, (short) 0);
+
+        this.pc = 0;
+        this.sr = 0;
+        this.cp = 0;
+        this.dp = 0;
+        this.ep = 0;
+        this.tp = 0;
+        this.br = 0;
+
+        this.sleep = false;
+        this.ex_ignore = false;
+        this.exception_pending = 0;
+
+        Arrays.fill(this.interrupt_pending, false);
+        Arrays.fill(this.trapa_pending, false);
+
+        this.cycles = 0;
+
+        Arrays.fill(this.dev_register, (byte) 0);
+
+        this.CC = 0;
     }
 
     void MCU_Reset() {

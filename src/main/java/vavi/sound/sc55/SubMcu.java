@@ -354,6 +354,16 @@ class SubMcu {
     }
 
     void SM_Reset() {
+        this.a = 0;
+        this.x = 0;
+        this.y = 0;
+        this.s = 0;
+        this.sr = 0;
+        this.cycles = 0;
+        this.sleep = false;
+
+        this.sm_timer_cycles = 0;
+
         this.pc = SM_GetVectorAddress(SM_VECTOR_RESET.ordinal());
     }
 
