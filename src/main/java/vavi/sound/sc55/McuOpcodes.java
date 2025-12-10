@@ -1195,7 +1195,7 @@ if (List.of(5900, 5901, 5902).contains(mcu.CC)) { System.err.printf("opcode_reg:
             R = t2 % t1;
             Q = t2 / t1;
 
-            if (Q > (short) 0xffff) {
+            if (Q > 0xff) {
                 mcu.MCU_SetStatus(false, STATUS_N.v);
                 mcu.MCU_SetStatus(false, STATUS_Z.v);
                 mcu.MCU_SetStatus(true, STATUS_V.v);
