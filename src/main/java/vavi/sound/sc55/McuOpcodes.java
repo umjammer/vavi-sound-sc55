@@ -170,6 +170,47 @@ class McuOpcodes {
         mcu.MCU_ErrorTrap();
     }
 
+    /**
+     * Switch-based dispatch to avoid Consumer interface overhead.
+     * This is the HOT PATH - called ~850K times/sec.
+     */
+    void MCU_DispatchOperand(byte operand) {
+        switch (operand & 0xff) {
+            case 0x00 -> MCU_Operand_Nop(operand);
+            case 0x01, 0x06, 0x07, 0x10, 0x11 -> MCU_Jump_JMP(operand);
+            case 0x02 -> MCU_LDM(operand);
+            case 0x03 -> MCU_Jump_PJSR(operand);
+            case 0x04, 0x05, 0x0C, 0x0D, 0x15, 0x1D -> MCU_Operand_General(operand);
+            case 0x08 -> MCU_TRAPA(operand);
+            case 0x09, 0x0B, 0x0F, 0x16, 0x17, 0x1B, 0x1F -> MCU_Operand_NotImplemented(operand);
+            case 0x0A -> MCU_Jump_RTE(operand);
+            case 0x0E, 0x1E -> MCU_Jump_BSR(operand);
+            case 0x12 -> MCU_STM(operand);
+            case 0x13 -> MCU_Jump_PJMP(operand);
+            case 0x14, 0x1C -> MCU_Jump_RTD(operand);
+            case 0x18 -> MCU_Jump_JSR(operand);
+            case 0x19 -> MCU_Jump_RTS(operand);
+            case 0x1A -> MCU_Operand_Sleep(operand);
+            case 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+                 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+                 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+                 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F -> MCU_Jump_Bcc(operand);
+            case 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,
+                 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F -> MCU_Opcode_Short_CMP(operand);
+            case 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57 -> MCU_Opcode_Short_MOVE(operand);
+            case 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F -> MCU_Opcode_Short_MOVI(operand);
+            case 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67,
+                 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F -> MCU_Opcode_Short_MOVL(operand);
+            case 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77,
+                 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F -> MCU_Opcode_Short_MOVS(operand);
+            case 0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
+                 0x88, 0x89, 0x8A, 0x8B, 0x8C, 0x8D, 0x8E, 0x8F,
+                 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
+                 0x98, 0x99, 0x9A, 0x9B, 0x9C, 0x9D, 0x9E, 0x9F -> MCU_Opcode_Short_MOVF(operand);
+            default -> MCU_Operand_General(operand); // 0xA0-0xFF
+        }
+    }
+
     enum General {
         GENERAL_DIRECT,
         GENERAL_INDIRECT,
@@ -609,7 +650,43 @@ class McuOpcodes {
         operand_status = 0;
 
 //if (mcu.CC == 790) { System.err.printf("opcode: %02x, opcode_reg: %02x, operand_ea: %04x%n", opcode & 0xff, opcode_reg & 0xff, operand_ea & 0xffff); }
-        MCU_Opcode_Table[opcode].accept((byte) opcode, opcode_reg);
+        MCU_DispatchOpcode((byte) opcode, opcode_reg);  // Switch-based dispatch (no interface overhead)
+    }
+
+    /**
+     * Switch-based dispatch for MCU_Opcode_Table (inside MCU_Operand_General).
+     */
+    void MCU_DispatchOpcode(byte opcode, byte opcode_reg) {
+        switch (opcode & 0x1f) {
+            case 0x00 -> MCU_Opcode_MOVG_Immediate(opcode, opcode_reg);
+            case 0x01 -> MCU_Opcode_ADDQ(opcode, opcode_reg);
+            case 0x02 -> MCU_Opcode_CLR(opcode, opcode_reg);
+            case 0x03 -> MCU_Opcode_SHLR(opcode, opcode_reg);
+            case 0x04 -> MCU_Opcode_ADD(opcode, opcode_reg);
+            case 0x05 -> MCU_Opcode_ADDS(opcode, opcode_reg);
+            case 0x06 -> MCU_Opcode_SUB(opcode, opcode_reg);
+            case 0x07 -> MCU_Opcode_SUBS(opcode, opcode_reg);
+            case 0x08 -> MCU_Opcode_OR(opcode, opcode_reg);
+            case 0x09 -> MCU_Opcode_BSET_ORC(opcode, opcode_reg);
+            case 0x0A -> MCU_Opcode_AND(opcode, opcode_reg);
+            case 0x0B -> MCU_Opcode_BCLR_ANDC(opcode, opcode_reg);
+            case 0x0C -> MCU_Opcode_XOR(opcode, opcode_reg);
+            case 0x0D -> MCU_Opcode_NotImplemented(opcode, opcode_reg);
+            case 0x0E -> MCU_Opcode_CMP(opcode, opcode_reg);
+            case 0x0F -> MCU_Opcode_BTST(opcode, opcode_reg);
+            case 0x10, 0x12 -> MCU_Opcode_MOVG(opcode, opcode_reg);
+            case 0x11 -> MCU_Opcode_LDC(opcode, opcode_reg);
+            case 0x13 -> MCU_Opcode_STC(opcode, opcode_reg);
+            case 0x14 -> MCU_Opcode_ADDX(opcode, opcode_reg);
+            case 0x15 -> MCU_Opcode_MULXU(opcode, opcode_reg);
+            case 0x16 -> MCU_Opcode_SUBX(opcode, opcode_reg);
+            case 0x17 -> MCU_Opcode_DIVXU(opcode, opcode_reg);
+            case 0x18, 0x19 -> MCU_Opcode_BSET(opcode, opcode_reg);
+            case 0x1A, 0x1B -> MCU_Opcode_BCLR(opcode, opcode_reg);
+            case 0x1C, 0x1D -> MCU_Opcode_BNOTI(opcode, opcode_reg);
+            case 0x1E, 0x1F -> MCU_Opcode_BTSTI(opcode, opcode_reg);
+            default -> MCU_Opcode_NotImplemented(opcode, opcode_reg);
+        }
     }
 
     void MCU_SetStatusCommon(int val, int siz) {

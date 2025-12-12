@@ -87,6 +87,11 @@ class Lcd {
         return lcd_quit_requested;
     }
 
+    /** Request quit programmatically (for testing) */
+    void requestQuit() {
+        lcd_quit_requested = true;
+    }
+
     void LCD_Write(int address, byte data) {
 //System.err.printf("%10d: %02x %02x%n", mcu.CC, address, data);
 //if (mcu.CC++ > 6000) { System.exit(1); }
@@ -393,7 +398,8 @@ logger.log(Level.DEBUG, "%d x %d x %d = %d, %d".formatted(lcd_background[0].leng
             return;
 
         if (!mcu.mcu_cm300 && !mcu.mcu_st && !mcu.mcu_scb55) {
-            synchronized (mcu.work_thread_lock) {
+            // Removed synchronized block - was incorrectly using ReentrantLock with synchronized
+            // and may have caused lock contention affecting audio timing
 
                 if (!lcd_enable && !mcu.mcu_jv880) {
                     for (int[] x : lcd_buffer)
@@ -470,7 +476,6 @@ logger.log(Level.DEBUG, "%d x %d x %d = %d, %d".formatted(lcd_background[0].leng
                         }
                     }
                 }
-            }
 
             for (int y = 0; y < lcd_height; y++) {
                 texture.getRaster().setDataElements(0, y, lcd_width, 1, lcd_buffer[y]);

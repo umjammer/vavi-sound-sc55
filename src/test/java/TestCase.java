@@ -191,4 +191,321 @@ Debug.println("meta: %02x".formatted(metaMessage.getType()));
 Debug.println("waiting...");
         cdl.await();
     }
+
+    @Test
+    @DisplayName("B3 note test for audio quality comparison")
+    @EnabledIfSystemProperty(named = "vavi.test", matches = "ide")
+    void testB3Note() throws Exception {
+        Mcu mcu = new Mcu();
+        Mcu.Config config = new Mcu.Config();
+        config.pageSize = 512;
+        config.pageNum = 32;
+
+        Thread emulatorThread = new Thread(() -> mcu.run(config), "EmulatorThread");
+        emulatorThread.start();
+
+        // Wait for emulator to start (2 seconds)
+        Thread.sleep(2000);
+        System.out.println("Sending B3 note...");
+
+        // Play B3 note (MIDI 59)
+        int note = 59;
+        int velocity = 100;
+        int channel = 0;
+
+        // Note On
+        mcu.MCU_PostUART((byte) (0x90 + channel));
+        mcu.MCU_PostUART((byte) note);
+        mcu.MCU_PostUART((byte) velocity);
+
+        // Hold for 15 seconds
+        Thread.sleep(15000);
+
+        // Note Off
+        mcu.MCU_PostUART((byte) (0x80 + channel));
+        mcu.MCU_PostUART((byte) note);
+        mcu.MCU_PostUART((byte) 0);
+
+        Thread.sleep(3000);
+        System.out.println("Test complete.");
+
+        // Let the emulator continue running for user to hear audio
+        // User can close the LCD window to stop
+        emulatorThread.join();
+    }
+
+    @Test
+    @DisplayName("Audio quality analysis - detect choppiness")
+    @EnabledIfSystemProperty(named = "vavi.test", matches = "ide")
+    void testAudioQuality() throws Exception {
+        // Capture audio samples for analysis
+        final int SAMPLE_RATE = 44100;
+        final int CAPTURE_SECONDS = 8;
+        final int CAPTURE_SAMPLES = SAMPLE_RATE * CAPTURE_SECONDS;
+        short[] capturedLeft = new short[CAPTURE_SAMPLES];
+        short[] capturedRight = new short[CAPTURE_SAMPLES];
+        int[] captureIndex = {0};
+        boolean[] capturing = {false};
+
+        Mcu mcu = new Mcu();
+
+        // Set capture callback
+        mcu.setAudioCaptureCallback((left, right) -> {
+            if (capturing[0] && captureIndex[0] < CAPTURE_SAMPLES) {
+                capturedLeft[captureIndex[0]] = left;
+                capturedRight[captureIndex[0]] = right;
+                captureIndex[0]++;
+            }
+        });
+
+        Mcu.Config config = new Mcu.Config();
+        config.pageSize = 512;
+        config.pageNum = 32;
+
+        Thread emulatorThread = new Thread(() -> mcu.run(config), "EmulatorThread");
+        emulatorThread.start();
+
+        // Wait for emulator to start
+        Thread.sleep(2000);
+
+        // Start capture and play note
+        System.out.println("Starting audio capture and playing B3 note...");
+        capturing[0] = true;
+
+        mcu.MCU_PostUART((byte) 0x90);
+        mcu.MCU_PostUART((byte) 59);
+        mcu.MCU_PostUART((byte) 100);
+
+        // Wait for capture to complete
+        Thread.sleep(CAPTURE_SECONDS * 1000 + 1000);
+
+        // Note off
+        mcu.MCU_PostUART((byte) 0x80);
+        mcu.MCU_PostUART((byte) 59);
+        mcu.MCU_PostUART((byte) 0);
+
+        capturing[0] = false;
+        int captured = captureIndex[0];
+        System.out.println("Captured " + captured + " samples");
+
+        // === AUDIO QUALITY ANALYSIS ===
+        System.out.println("\n=== AUDIO QUALITY ANALYSIS ===\n");
+
+        // 1. Count silence gaps (consecutive zero samples)
+        int silenceGaps = 0;
+        int currentSilence = 0;
+        int maxSilence = 0;
+        int totalSilenceSamples = 0;
+        for (int i = 0; i < captured; i++) {
+            if (capturedLeft[i] == 0 && capturedRight[i] == 0) {
+                currentSilence++;
+                totalSilenceSamples++;
+            } else {
+                if (currentSilence > 100) { // Gap > 2.3ms at 44.1kHz
+                    silenceGaps++;
+                    if (currentSilence > maxSilence) maxSilence = currentSilence;
+                }
+                currentSilence = 0;
+            }
+        }
+        double silencePercent = (double) totalSilenceSamples / captured * 100;
+        System.out.println("1. SILENCE ANALYSIS:");
+        System.out.println("   Total silence: " + String.format("%.2f%%", silencePercent));
+        System.out.println("   Silence gaps (>2.3ms): " + silenceGaps);
+        System.out.println("   Max gap duration: " + String.format("%.1fms", maxSilence / 44.1));
+
+        // 2. Detect sudden amplitude changes (clicks/pops)
+        int clickCount = 0;
+        int maxDelta = 0;
+        long totalDelta = 0;
+        for (int i = 1; i < captured; i++) {
+            int delta = Math.abs(capturedLeft[i] - capturedLeft[i-1]);
+            totalDelta += delta;
+            if (delta > maxDelta) maxDelta = delta;
+            // Click detection: sudden change > 10000 in single sample
+            if (delta > 10000) clickCount++;
+        }
+        double avgDelta = (double) totalDelta / (captured - 1);
+        System.out.println("\n2. DISCONTINUITY ANALYSIS:");
+        System.out.println("   Clicks/pops detected: " + clickCount);
+        System.out.println("   Max sample delta: " + maxDelta);
+        System.out.println("   Avg sample delta: " + String.format("%.1f", avgDelta));
+
+        // 3. Detect repeated sample patterns (buffer underrun symptom)
+        int repeatedPatterns = 0;
+        for (int i = 100; i < captured - 100; i++) {
+            // Check if 50 consecutive samples repeat
+            boolean allSame = true;
+            short val = capturedLeft[i];
+            for (int j = 1; j < 50 && allSame; j++) {
+                if (capturedLeft[i + j] != val) allSame = false;
+            }
+            if (allSame && val != 0) repeatedPatterns++;
+        }
+        System.out.println("\n3. REPEATED PATTERN ANALYSIS:");
+        System.out.println("   Stuck samples detected: " + repeatedPatterns);
+
+        // 4. RMS amplitude analysis (should be stable during sustained note)
+        int windowSize = SAMPLE_RATE / 10; // 100ms windows
+        double minRms = Double.MAX_VALUE;
+        double maxRms = 0;
+        int numWindows = 0;
+        // Skip first 0.5s (attack) and analyze sustain portion
+        for (int i = SAMPLE_RATE / 2; i < captured - windowSize; i += windowSize) {
+            double sum = 0;
+            for (int j = 0; j < windowSize; j++) {
+                sum += (double) capturedLeft[i + j] * capturedLeft[i + j];
+            }
+            double rms = Math.sqrt(sum / windowSize);
+            if (rms > 100) { // Only consider non-silent windows
+                if (rms < minRms) minRms = rms;
+                if (rms > maxRms) maxRms = rms;
+                numWindows++;
+            }
+        }
+        double rmsVariation = (maxRms > 0) ? (maxRms - minRms) / maxRms * 100 : 0;
+        System.out.println("\n4. RMS STABILITY (sustain portion):");
+        System.out.println("   Min RMS: " + String.format("%.1f", minRms));
+        System.out.println("   Max RMS: " + String.format("%.1f", maxRms));
+        System.out.println("   RMS variation: " + String.format("%.1f%%", rmsVariation));
+        System.out.println("   Windows analyzed: " + numWindows);
+
+        // 5. Overall quality score
+        System.out.println("\n=== QUALITY VERDICT ===");
+        boolean hasProblems = false;
+        if (silencePercent > 10) {
+            System.out.println("FAIL: Too much silence (" + String.format("%.1f%%", silencePercent) + " > 10%)");
+            hasProblems = true;
+        }
+        if (silenceGaps > 5) {
+            System.out.println("FAIL: Too many silence gaps (" + silenceGaps + " > 5)");
+            hasProblems = true;
+        }
+        if (clickCount > 10) {
+            System.out.println("FAIL: Too many clicks (" + clickCount + " > 10)");
+            hasProblems = true;
+        }
+        if (rmsVariation > 50) {
+            System.out.println("FAIL: RMS too unstable (" + String.format("%.1f%%", rmsVariation) + " > 50%)");
+            hasProblems = true;
+        }
+        if (!hasProblems) {
+            System.out.println("PASS: Audio quality metrics acceptable");
+        }
+
+        Thread.sleep(1000);
+        System.out.println("\nTest complete. Stopping emulator...");
+        mcu.stop();
+        emulatorThread.join(5000);  // Wait up to 5 seconds for graceful shutdown
+    }
+
+    @Test
+    @DisplayName("Multi-note test - detect muddiness after many notes")
+    @EnabledIfSystemProperty(named = "vavi.test", matches = "ide")
+    void testMultiNoteQuality() throws Exception {
+        final int SAMPLE_RATE = 44100;
+        final int SAMPLES_PER_NOTE = SAMPLE_RATE / 4; // 0.25 seconds per note (faster playing)
+        final int NUM_NOTES = 50;  // Increased from 15 to catch voice accumulation
+        final int TOTAL_SAMPLES = SAMPLES_PER_NOTE * NUM_NOTES;
+
+        short[] capturedLeft = new short[TOTAL_SAMPLES];
+        short[] capturedRight = new short[TOTAL_SAMPLES];
+        int[] captureIndex = {0};
+        boolean[] capturing = {false};
+
+        Mcu mcu = new Mcu();
+        mcu.setAudioCaptureCallback((left, right) -> {
+            if (capturing[0] && captureIndex[0] < TOTAL_SAMPLES) {
+                capturedLeft[captureIndex[0]] = left;
+                capturedRight[captureIndex[0]] = right;
+                captureIndex[0]++;
+            }
+        });
+
+        Mcu.Config config = new Mcu.Config();
+        config.pageSize = 512;
+        config.pageNum = 32;
+
+        Thread emulatorThread = new Thread(() -> mcu.run(config), "EmulatorThread");
+        emulatorThread.start();
+        Thread.sleep(2000);
+
+        System.out.println("=== MULTI-NOTE QUALITY TEST ===");
+        System.out.println("Playing " + NUM_NOTES + " notes sequentially...\n");
+
+        capturing[0] = true;
+        int baseNote = 48; // C3
+
+        // Play notes one at a time, release previous before playing next
+        for (int i = 0; i < NUM_NOTES; i++) {
+            int note = baseNote + i;
+
+            // Note On
+            mcu.MCU_PostUART((byte) 0x90);
+            mcu.MCU_PostUART((byte) note);
+            mcu.MCU_PostUART((byte) 100);
+
+            System.out.println("Note " + (i + 1) + ": Playing MIDI note " + note);
+            Thread.sleep(200); // Hold for 0.2 seconds (faster playing)
+
+            // Note Off
+            mcu.MCU_PostUART((byte) 0x80);
+            mcu.MCU_PostUART((byte) note);
+            mcu.MCU_PostUART((byte) 0);
+
+            Thread.sleep(50); // Short gap between notes (realistic MIDI timing)
+        }
+
+        capturing[0] = false;
+        int captured = captureIndex[0];
+        System.out.println("\nCaptured " + captured + " samples total");
+
+        // Analyze each note's audio quality
+        System.out.println("\n=== PER-NOTE ANALYSIS ===\n");
+
+        for (int noteIdx = 0; noteIdx < NUM_NOTES; noteIdx++) {
+            int startSample = noteIdx * SAMPLES_PER_NOTE;
+            int endSample = Math.min(startSample + SAMPLES_PER_NOTE, captured);
+
+            if (startSample >= captured) break;
+
+            // Calculate RMS for this note
+            double sumSquares = 0;
+            int nonZeroSamples = 0;
+            int silentSamples = 0;
+
+            for (int i = startSample; i < endSample; i++) {
+                if (capturedLeft[i] == 0 && capturedRight[i] == 0) {
+                    silentSamples++;
+                } else {
+                    sumSquares += (double) capturedLeft[i] * capturedLeft[i];
+                    nonZeroSamples++;
+                }
+            }
+
+            double rms = nonZeroSamples > 0 ? Math.sqrt(sumSquares / nonZeroSamples) : 0;
+            double silencePercent = 100.0 * silentSamples / (endSample - startSample);
+
+            // Check for high-frequency content (potential muddiness indicator)
+            // Simple check: count zero-crossings (fewer = more low-frequency = potentially muddy)
+            int zeroCrossings = 0;
+            for (int i = startSample + 1; i < endSample; i++) {
+                if ((capturedLeft[i-1] >= 0 && capturedLeft[i] < 0) ||
+                    (capturedLeft[i-1] < 0 && capturedLeft[i] >= 0)) {
+                    zeroCrossings++;
+                }
+            }
+            double crossingRate = 1000.0 * zeroCrossings / (endSample - startSample);
+
+            String status = silencePercent > 20 ? "CHOPPY" :
+                           (crossingRate < 50 ? "POSSIBLY MUDDY" : "OK");
+
+            System.out.printf("Note %2d: RMS=%6.1f, Silence=%5.1f%%, ZeroCrossRate=%5.1f/1000 [%s]%n",
+                    noteIdx + 1, rms, silencePercent, crossingRate, status);
+        }
+
+        System.out.println("\nTest complete. Stopping emulator...");
+        mcu.stop();
+        emulatorThread.join(5000);
+    }
 }

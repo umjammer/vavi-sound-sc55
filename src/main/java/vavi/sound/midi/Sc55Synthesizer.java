@@ -98,6 +98,12 @@ logger.log(Level.WARNING, "already open: " + hashCode());
             player.run(new Config());
         });
 
+        // Wait for emulator to be fully ready (ROM loading, audio setup, initial samples)
+        // This ensures MIDI messages aren't sent before the emulator can process them
+        if (!player.waitForReady(5000)) {
+            logger.log(Level.WARNING, "Emulator did not become ready within 5 seconds");
+        }
+
         //
         isOpen = true;
 
@@ -108,7 +114,9 @@ logger.log(Level.WARNING, "already open: " + hashCode());
     /** when midi spi */
     private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r);
-        thread.setPriority(Thread.MIN_PRIORITY);
+        // Use NORM_PRIORITY instead of MIN_PRIORITY to prevent emulator falling behind
+        // MIN_PRIORITY caused voice accumulation issues when playing fast notes
+        thread.setPriority(Thread.NORM_PRIORITY);
         return thread;
     });
 

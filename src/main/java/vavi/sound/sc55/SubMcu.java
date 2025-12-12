@@ -404,6 +404,63 @@ class SubMcu {
         SM_ErrorTrap();
     }
 
+    /**
+     * Switch-based dispatch to avoid Consumer interface overhead.
+     * This is the HOT PATH - called ~1M times/sec.
+     */
+    void SM_DispatchOpcode(byte opcode) {
+        switch (opcode & 0xff) {
+            case 0x01, 0x05, 0x09, 0x0d, 0x11, 0x15, 0x19, 0x1d -> SM_Opcode_ORA(opcode);
+            case 0x02, 0x20, 0x22 -> SM_Opcode_JSR(opcode);
+            case 0x03, 0x07, 0x13, 0x17, 0x23, 0x27, 0x33, 0x37,
+                 0x43, 0x47, 0x53, 0x57, 0x63, 0x67, 0x73, 0x77,
+                 0x83, 0x87, 0x93, 0x97, 0xa3, 0xa7, 0xb3, 0xb7,
+                 0xc3, 0xc7, 0xd3, 0xd7, 0xe3, 0xe7, 0xf3, 0xf7 -> SM_Opcode_BBC_BBS(opcode);
+            case 0x0b, 0x0f, 0x1b, 0x1f, 0x2b, 0x2f, 0x3b, 0x3f,
+                 0x4b, 0x4f, 0x5b, 0x5f, 0x6b, 0x6f, 0x7b, 0x7f,
+                 0x8b, 0x8f, 0x9b, 0x9f, 0xab, 0xaf, 0xbb, 0xbf,
+                 0xcb, 0xcf, 0xdb, 0xdf, 0xeb, 0xef, 0xfb, 0xff -> SM_Opcode_SEB_CLB(opcode);
+            case 0x10 -> SM_Opcode_BPL(opcode);
+            case 0x12 -> SM_Opcode_CLT(opcode);
+            case 0x18 -> SM_Opcode_CLC(opcode);
+            case 0x1a, 0xc6, 0xd6, 0xce, 0xde -> SM_Opcode_DEC(opcode);
+            case 0x21, 0x25, 0x29, 0x2d, 0x31, 0x35, 0x39, 0x3d -> SM_Opcode_AND(opcode);
+            case 0x38 -> SM_Opcode_SEC(opcode);
+            case 0x3a, 0xe6, 0xf6, 0xee, 0xfe -> SM_Opcode_INC(opcode);
+            case 0x3c -> SM_Opcode_LDM(opcode);
+            case 0x40 -> SM_Opcode_RTI(opcode);
+            case 0x42 -> SM_Opcode_STP(opcode);
+            case 0x48 -> SM_Opcode_PHA(opcode);
+            case 0x4c, 0x6c, 0xb2 -> SM_Opcode_JMP(opcode);
+            case 0x58 -> SM_Opcode_CLI(opcode);
+            case 0x60 -> SM_Opcode_RTS(opcode);
+            case 0x68 -> SM_Opcode_PLA(opcode);
+            case 0x78 -> SM_Opcode_SEI(opcode);
+            case 0x80 -> SM_Opcode_BRA(opcode);
+            case 0x81, 0x85, 0x8d, 0x91, 0x95, 0x99, 0x9d -> SM_Opcode_STA(opcode);
+            case 0x84, 0x8c, 0x94 -> SM_Opcode_STY(opcode);
+            case 0x86, 0x8e, 0x96 -> SM_Opcode_STX(opcode);
+            case 0x8a -> SM_Opcode_TXA(opcode);
+            case 0x90 -> SM_Opcode_BCC(opcode);
+            case 0x9a -> SM_Opcode_TXS(opcode);
+            case 0xa0, 0xa4, 0xac, 0xb4, 0xbc -> SM_Opcode_LDY(opcode);
+            case 0xa1, 0xa5, 0xa9, 0xad, 0xb1, 0xb5, 0xb9, 0xbd -> SM_Opcode_LDA(opcode);
+            case 0xa2, 0xa6, 0xae, 0xb6, 0xbe -> SM_Opcode_LDX(opcode);
+            case 0xaa -> SM_Opcode_TAX(opcode);
+            case 0xb0 -> SM_Opcode_BCS(opcode);
+            case 0xc0, 0xc4, 0xcc -> SM_Opcode_CPY(opcode);
+            case 0xc1, 0xc5, 0xc9, 0xcd, 0xd1, 0xd5, 0xd9, 0xdd -> SM_Opcode_CMP(opcode);
+            case 0xc8 -> SM_Opcode_INY(opcode);
+            case 0xd0 -> SM_Opcode_BNE(opcode);
+            case 0xd8 -> SM_Opcode_CLD(opcode);
+            case 0xe0, 0xe4, 0xec -> SM_Opcode_CPX(opcode);
+            case 0xe8 -> SM_Opcode_INX(opcode);
+            case 0xea -> SM_Opcode_NOP(opcode);
+            case 0xf0 -> SM_Opcode_BEQ(opcode);
+            default -> SM_Opcode_NotImplemented(opcode);
+        }
+    }
+
     void SM_Opcode_SEI(byte opcode) { // 78
         SM_SetStatus(1, SM_STATUS_I.v);
     }
@@ -1328,22 +1385,50 @@ class SubMcu {
         }
     }
 
+    // Diagnostic counters for UART
+    private long diagUartCalls = 0;
+    private long diagUartRxDisabled = 0;
+    private long diagUartNoData = 0;
+    private long diagUartGotByte = 0;
+    private long diagUartDelay = 0;
+    private long diagUartReceived = 0;
+    private long diagUartLastPrint = 0;
+
     void SM_UpdateUART() {
-        if ((sm_device_mode[SM_DEV_UART1_CTRL.v] & 4) == 0) // RX disabled
-            return;
-        if (mcu.uart_write_ptr.get() == mcu.uart_read_ptr.get()) // no byte
-            return;
+        diagUartCalls++;
 
-        if (uart_rx_gotbyte != 0)
-            return;
+        // Print diagnostic every 1 second (approximately every 5M calls at current rate)
+        if (diagUartCalls - diagUartLastPrint >= 1000000) {
+            System.err.printf("SM_UART: calls=%d rxDisabled=%d noData=%d gotByte=%d delay=%d received=%d UART1_CTRL=0x%02x%n",
+                    diagUartCalls, diagUartRxDisabled, diagUartNoData, diagUartGotByte, diagUartDelay, diagUartReceived,
+                    sm_device_mode[SM_DEV_UART1_CTRL.v] & 0xff);
+            diagUartLastPrint = diagUartCalls;
+        }
 
-        if (this.cycles < uart_rx_delay)
+        if ((sm_device_mode[SM_DEV_UART1_CTRL.v] & 4) == 0) { // RX disabled
+            diagUartRxDisabled++;
             return;
+        }
+        if (mcu.uart_write_ptr.get() == mcu.uart_read_ptr.get()) { // no byte
+            diagUartNoData++;
+            return;
+        }
+
+        if (uart_rx_gotbyte != 0) {
+            diagUartGotByte++;
+            return;
+        }
+
+        if (this.cycles < uart_rx_delay) {
+            diagUartDelay++;
+            return;
+        }
 
         uart_rx_byte = mcu.uart_buffer[mcu.uart_read_ptr.get()];
         mcu.uart_read_ptr.set((mcu.uart_read_ptr.get() + 1) % Mcu.uart_buffer_size);
         uart_rx_gotbyte = 1;
         sm_device_mode[SM_DEV_INT_REQUEST.v] |= 0x40;
+        diagUartReceived++;
 
         uart_rx_delay = this.cycles + 3000 * 4;
     }
@@ -1355,7 +1440,7 @@ class SubMcu {
             if (!this.sleep) {
                 byte opcode = SM_ReadAdvance();
 
-                SM_Opcode_Table[opcode & 0xff].accept(opcode);
+                SM_DispatchOpcode(opcode);  // Switch-based dispatch (no interface overhead)
             }
 
             this.cycles += 12 * 4; // FIXME

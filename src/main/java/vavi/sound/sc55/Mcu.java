@@ -46,7 +46,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
@@ -581,6 +580,15 @@ public class Mcu {
     public AtomicInteger sample_write_ptr = new AtomicInteger(0);
 
     private SourceDataLine audioOut;
+
+    // Audio capture callback for testing
+    public interface AudioCaptureCallback {
+        void onSamples(short left, short right);
+    }
+    private AudioCaptureCallback audioCaptureCallback;
+    public void setAudioCaptureCallback(AudioCaptureCallback callback) {
+        this.audioCaptureCallback = callback;
+    }
 
     void MCU_ErrorTrap() {
         logger.log(Level.DEBUG, "cp: %2x pc: %4x".formatted(this.cp & 0xff, this.pc & 0xffff), new Exception("MCU_ErrorTrap"));
@@ -1216,7 +1224,7 @@ int CC = 0;
 
 //System.err.printf("%10d pc: %04x, oprand: %02x, sr: %04x%n", CC++, (pc - 1) & 0xffff, operand & 0xff, sr & 0xffff);
 //if (CC > 100000) { System.exit(1); }
-        opcodes.MCU_Operand_Table[operand & 0xff].accept(operand);
+        opcodes.MCU_DispatchOperand(operand);  // Switch-based dispatch (no interface overhead)
 
         if ((this.sr & Status.STATUS_T.v) != 0) {
             interrupt.MCU_Interrupt_Exception(EXCEPTION_SOURCE_TRACE.ordinal());
@@ -1281,10 +1289,46 @@ int CC = 0;
         }
     }
 
+    // MIDI message tracking for diagnostic
+    private int diagMidiStatus = 0;
+    private int diagMidiData1 = 0;
+    private int diagMidiByteCount = 0;
+
     public void MCU_PostUART(byte data) {
+        // Warn if MIDI arrives before emulator is ready - these messages will be buffered
+        // but could cause issues if there's a burst of messages waiting when processing starts
+        if (!emulatorReady && (data & 0x80) != 0) {
+            logger.log(Level.WARNING, "MIDI status byte %02x received before emulator ready".formatted(data & 0xff));
+        }
         uart_buffer[uart_write_ptr.get()] = data;
 logger.log(Level.DEBUG, "%02x, %d".formatted(data & 0xff, uart_write_ptr.get()));
         uart_write_ptr.set((uart_write_ptr.get() + 1) % uart_buffer_size);
+
+        // Track MIDI messages for diagnostic (commented out for normal operation)
+        // int d = data & 0xff;
+        // if (d >= 0x80) {
+        //     diagMidiStatus = d;
+        //     diagMidiByteCount = 1;
+        // } else {
+        //     diagMidiByteCount++;
+        //     if (diagMidiByteCount == 2) diagMidiData1 = d;
+        //     else if (diagMidiByteCount == 3) {
+        //         int cmd = diagMidiStatus & 0xf0;
+        //         int ch = diagMidiStatus & 0x0f;
+        //         if (cmd == 0x80) {
+        //             System.err.printf("MIDI_NOTE_OFF: ch=%d note=%d vel=%d mask=0x%08x%n",
+        //                     ch, diagMidiData1, d, pcm.voice_mask);
+        //         } else if (cmd == 0x90) {
+        //             if (d > 0) {
+        //                 System.err.printf("MIDI_NOTE_ON: ch=%d note=%d vel=%d mask=0x%08x%n",
+        //                         ch, diagMidiData1, d, pcm.voice_mask);
+        //             } else {
+        //                 System.err.printf("MIDI_NOTE_OFF: ch=%d note=%d vel=%d mask=0x%08x (via 0x90)%n",
+        //                         ch, diagMidiData1, d, pcm.voice_mask);
+        //             }
+        //         }
+        //     }
+        // }
     }
 
     void MCU_UpdateUART_RX() {
@@ -1322,7 +1366,42 @@ logger.log(Level.DEBUG, "%02x, %d".formatted(data & 0xff, uart_write_ptr.get()))
 //        logger.log(Level.TRACE, "tx:%x\n", dev_register[DEV_TDR]);
     }
 
-    private boolean work_thread_run = false;
+    private volatile boolean work_thread_run = false;
+
+    /** Indicates when the emulator is ready to process MIDI messages */
+    private volatile boolean emulatorReady = false;
+
+    /** Number of samples to process before marking emulator as ready */
+    private static final int READY_SAMPLE_THRESHOLD = 66207; // ~1 second of audio at 66207 Hz
+
+    /** Stops the emulator threads. Safe to call from any thread. */
+    public void stop() {
+        work_thread_run = false;
+        lcd.requestQuit();
+    }
+
+    /**
+     * Waits for the emulator to be ready to process MIDI messages.
+     * @param timeoutMs maximum time to wait in milliseconds
+     * @return true if emulator became ready, false if timeout
+     */
+    public boolean waitForReady(long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (!emulatorReady && System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return emulatorReady;
+    }
+
+    /** Returns true if the emulator is ready to process MIDI */
+    public boolean isReady() {
+        return emulatorReady;
+    }
 
     final ReentrantLock work_thread_lock = new ReentrantLock();
 
@@ -1336,70 +1415,171 @@ logger.log(Level.TRACE, "mutex lock");
 logger.log(Level.TRACE, "mutex unlock");
     }
 
+    // Diagnostic counters
+    private long diagStartTime = 0;
+    private long diagMcuIterations = 0;
+    private long diagLastReportTime = 0;
+    private long diagWaitCount = 0;
+    private long diagWaitTime = 0;
+
+    // Batch size for MCU instruction execution
+    // Larger = less overhead, but more latency. 64 instructions ≈ 1 PCM sample.
+    private static final int MCU_BATCH_SIZE = 1;  // Must be 1 to match C++ timing exactly
+
+    // PCM clock rate (24 MHz for MCU, PCM runs in sync)
+    private static final long PCM_CLOCK_RATE = 24_000_000L;
+
+    /**
+     * Separate PCM synthesis thread - syncs with MCU cycles but runs in parallel.
+     * This allows MCU to run fast while PCM catches up in a separate thread.
+     */
+    void pcm_thread() {
+        logger.log(Level.DEBUG, "PCM thread start");
+        try {
+            while (work_thread_run) {
+                // Check buffer status - wait if buffer is almost full
+                int w = sample_write_ptr.get();
+                int r = sample_read_ptr.get();
+                int used = (w >= r) ? w - r : audio_buffer_size - r + w;
+                int free = audio_buffer_size - used - 1;
+
+                if (free < 256) {
+                    // Buffer full - wait for audio consumer to drain
+                    LockSupport.parkNanos(100_000); // 0.1ms
+                    continue;
+                }
+
+                // Align write pointer based on PCM config
+                if ((pcm.config_reg_3c & 0x40) != 0) {
+                    w &= ~3;
+                } else {
+                    w &= ~1;
+                }
+                sample_write_ptr.set(w);
+
+                // Run PCM to catch up with MCU cycles (not real-time)
+                // This ensures PCM only generates audio for state that MCU has processed
+                long targetCycles = this.cycles; // Use MCU's current cycle count
+                if (pcm.cycles < targetCycles) {
+                    pcm.PCM_Update(targetCycles);
+                } else {
+                    // PCM is caught up with MCU - wait briefly for MCU to advance
+                    LockSupport.parkNanos(50_000); // 0.05ms
+                }
+            }
+        } catch (Throwable t) {
+            logger.log(Level.ERROR, "PCM thread error: " + t.getMessage(), t);
+        }
+        logger.log(Level.DEBUG, "PCM thread end");
+    }
+
     void work_thread() {
 logger.log(Level.DEBUG, "task start: ex_ignore: " + ex_ignore + ", sleep: " + sleep);
 try {
         MCU_WorkThread_Lock();
+        diagStartTime = System.nanoTime();
+        diagLastReportTime = diagStartTime;
 
         while (work_thread_run) {
-            // 1. Align Write Pointer
-            int sample_write_ptr_ = sample_write_ptr.get();
-            if ((pcm.config_reg_3c & 0x40) != 0)
-                sample_write_ptr_ &= ~3;
-            else
-                sample_write_ptr_ &= ~1;
-            sample_write_ptr.set(sample_write_ptr_);
-
-            // 2. Check if Buffer is FULL (Standard Circular Logic)
-            int next_write_ptr = (sample_write_ptr_ + 4) % audio_buffer_size;
-            int r = sample_read_ptr.get();
-
-            if (next_write_ptr == r) {
-                MCU_WorkThread_Unlock();
-                // Wait for the Audio Thread to make space
-                while (next_write_ptr == r && work_thread_run) {
-                    // 0.1ms wait. Fast enough to catch up, slow enough to save CPU.
-                    LockSupport.parkNanos(100_000);
-                    r = sample_read_ptr.get();
-                }
-                MCU_WorkThread_Lock();
+            // Check buffer status once per batch
+            int w = sample_write_ptr.get();
+            if ((pcm.config_reg_3c & 0x40) != 0) {
+                w &= ~3;
+                sample_write_ptr.set(w);
+            } else {
+                w &= ~1;
+                sample_write_ptr.set(w);
             }
 
-            // ... (Keep existing logic: interrupts, instructions, etc.) ...
-            if (!this.ex_ignore)
-                interrupt.MCU_Interrupt_Handle();
-            else
-                this.ex_ignore = false;
+            int r = sample_read_ptr.get();
+            int used = (w >= r) ? w - r : audio_buffer_size - r + w;
+            int free = audio_buffer_size - used - 1;
+            if (free < 256) {
+                diagWaitCount++;
+                long waitStart = System.nanoTime();
+                MCU_WorkThread_Unlock();
+                while (work_thread_run) {
+                    w = sample_write_ptr.get();
+                    r = sample_read_ptr.get();
+                    used = (w >= r) ? w - r : audio_buffer_size - r + w;
+                    free = audio_buffer_size - used - 1;
+                    if (free >= 256) break;
+                    LockSupport.parkNanos(100_000);
+                }
+                MCU_WorkThread_Lock();
+                diagWaitTime += System.nanoTime() - waitStart;
+            }
 
-            if (!this.sleep)
-                MCU_ReadInstruction();
+            // === BATCH EXECUTION: Run MCU instructions in tight loop ===
+            // This reduces per-iteration overhead (atomic ops, method calls, condition checks)
+            for (int batch = 0; batch < MCU_BATCH_SIZE && work_thread_run; batch++) {
+                if (!this.ex_ignore)
+                    interrupt.MCU_Interrupt_Handle();
+                else
+                    this.ex_ignore = false;
 
-            this.cycles += 12; // FIXME: assume 12 cycles per instruction
+                if (!this.sleep)
+                    MCU_ReadInstruction();
 
-            // if (this.cycles % 24000000 == 0)
-            //     logger.log(Level.TRACE, "seconds: %d".formatted((int)(this.cycles / 24000000)));
+                this.cycles += 12;
+                diagMcuIterations++;
+            }
 
-            pcm.PCM_Update(this.cycles);
+            // === SUBSYSTEM UPDATES: Called once per batch ===
+            // PCM, Timer, SM will process all accumulated cycles at once
+            if (pcm.cycles < this.cycles)
+                pcm.PCM_Update(this.cycles);
 
-            timer.TIMER_Clock(this.cycles);
+            // Mark emulator as ready after processing enough samples
+            if (!emulatorReady && pcm.getTotalSamples() >= READY_SAMPLE_THRESHOLD) {
+                emulatorReady = true;
+                logger.log(Level.INFO, "Emulator ready after " + pcm.getTotalSamples() + " samples");
+            }
 
-            if (!mcu_mk1 && !mcu_jv880 && !mcu_scb55)
-                sm.SM_Update(this.cycles);
-            else {
+            if (timer.timer_cycles * 2 < this.cycles)
+                timer.TIMER_Clock(this.cycles);
+
+            if (!mcu_mk1 && !mcu_jv880 && !mcu_scb55) {
+                if (sm.cycles < this.cycles * 5) {
+                    sm.SM_Update(this.cycles);
+                }
+            } else {
                 MCU_UpdateUART_RX();
                 MCU_UpdateUART_TX();
             }
+            // Debug: check if SM is being called
+            if (diagMcuIterations == 1) {
+                System.err.printf("SM_CHECK: mcu_mk1=%b, mcu_jv880=%b, mcu_scb55=%b, sm.cycles=%d, mcu.cycles=%d%n",
+                        mcu_mk1, mcu_jv880, mcu_scb55, sm.cycles, this.cycles);
+            }
 
-            MCU_UpdateAnalog(this.cycles);
+            if ((dev_register[Dev.DEV_ADCSR.v] & 0x20) != 0)
+                MCU_UpdateAnalog(this.cycles);
 
             if (mcu_mk1) {
                 if (ga_lcd_counter != 0) {
-                    ga_lcd_counter--;
-                    if (ga_lcd_counter == 0) {
+                    ga_lcd_counter -= MCU_BATCH_SIZE;
+                    if (ga_lcd_counter <= 0) {
+                        ga_lcd_counter = 0;
                         MCU_GA_SetGAInt(1, false);
                         MCU_GA_SetGAInt(1, true);
                     }
                 }
+            }
+
+            // Diagnostic reporting every 2 seconds
+            long now = System.nanoTime();
+            long elapsed = now - diagLastReportTime;
+            if (elapsed >= 2_000_000_000L) {
+                double secs = elapsed / 1_000_000_000.0;
+                long mcuRate = (long)(diagMcuIterations / secs);
+                double waitPct = 100.0 * diagWaitTime / elapsed;
+                System.out.printf("DIAG: MCU=%,d/s, waits=%d (%.1f%% of time waiting)%n",
+                    mcuRate, diagWaitCount, waitPct);
+                diagMcuIterations = 0;
+                diagLastReportTime = now;
+                diagWaitCount = 0;
+                diagWaitTime = 0;
             }
         }
 
@@ -1416,7 +1596,7 @@ logger.log(Level.DEBUG, "task end");
             boolean working = true;
 
             work_thread_run = true;
-            es.submit(this::work_thread); // , "work thread"
+            es.submit(this::work_thread); // MCU emulation thread (includes PCM)
 logger.log(Level.DEBUG, "thread start");
 
             while (working) {
@@ -1434,7 +1614,7 @@ logger.log(Level.DEBUG, "working is false");
             es.close();
 logger.log(Level.DEBUG, "thread end");
 
-        } catch (InterruptedException ignoree) {
+        } catch (Exception ignoree) {
 } catch (Throwable t) {
  logger.log(Level.ERROR, t.getMessage(), t);
  throw t;
@@ -1499,83 +1679,66 @@ logger.log(Level.DEBUG, "thread end");
         }
     }
 
-    // sdl callback len is 512
+    // Match C++ SDL audio_callback: simple memcpy, no resampling
+    // SDL outputs at native 66207 Hz, so does this version now
     public void audioLoop() {
-        final double INPUT_RATE = (mcu_mk1 || mcu_jv880) ? 64000.0 : 66207.0;
-        final double OUTPUT_RATE = 44100.0;
-        final double STEP = INPUT_RATE / OUTPUT_RATE;
-
-        final int OUTPUT_FRAMES = 512;
-        byte[] outBytes = new byte[OUTPUT_FRAMES * 2 * 2];
-        double pos = 0.0;
+        // Match SDL: spec.samples = audio_page_size / 4 = 128 frames
+        final int OUTPUT_FRAMES = audio_page_size / 4;
+        final int SAMPLES_PER_FRAME = 2; // stereo
+        final int BYTES_PER_SAMPLE = 2;  // 16-bit
+        byte[] outBytes = new byte[OUTPUT_FRAMES * SAMPLES_PER_FRAME * BYTES_PER_SAMPLE];
 
         while (work_thread_run) {
             try {
                 int r = sample_read_ptr.get();
                 int w = sample_write_ptr.get();
 
-                // Calculate how much valid data is actually in the buffer
+                // Calculate available samples (stereo pairs)
                 int available = (w >= r) ? w - r : audio_buffer_size - r + w;
 
-                // --- 1. RESAMPLE & READ ---
+                // Number of samples to copy (stereo samples = frames * 2)
+                int samplesToRead = OUTPUT_FRAMES * SAMPLES_PER_FRAME;
+
+                // --- DIRECT COPY (like C++ memcpy) ---
                 int outIdx = 0;
-                for (int i = 0; i < OUTPUT_FRAMES; i++) {
-                    int idx = (int) pos;
-                    double frac = pos - idx;
-
-                    short l0 = 0, r0 = 0, l1 = 0, r1 = 0;
-
-                    // CRITICAL: Only read if data exists!
-                    // If 'idx' points to data we haven't generated yet (underrun), use 0.
-                    // This prevents "Refraining" (echoing old data).
-                    if ((idx * 2) + 2 < available) {
-                        int idxL0 = (r + idx * 2) % audio_buffer_size;
-                        int idxR0 = (r + idx * 2 + 1) % audio_buffer_size;
-                        int idxL1 = (r + (idx + 1) * 2) % audio_buffer_size;
-                        int idxR1 = (r + (idx + 1) * 2 + 1) % audio_buffer_size;
-
-                        l0 = sample_buffer[idxL0];
-                        r0 = sample_buffer[idxR0];
-                        l1 = sample_buffer[idxL1];
-                        r1 = sample_buffer[idxR1];
+                for (int i = 0; i < samplesToRead; i++) {
+                    short sample = 0;
+                    if (i < available) {
+                        int idx = (r + i) % audio_buffer_size;
+                        sample = sample_buffer[idx];
                     }
-                    // Else: l0, r0, etc. remain 0 (Silence)
+                    // Else: output silence (0) for underrun
 
-                    short outL = (short) (l0 + (l1 - l0) * frac);
-                    short outR = (short) (r0 + (r1 - r0) * frac);
+                    // Capture callback for testing (every other sample = left channel)
+                    if (audioCaptureCallback != null && (i & 1) == 0) {
+                        short left = sample;
+                        short right = (i + 1 < available) ? sample_buffer[(r + i + 1) % audio_buffer_size] : 0;
+                        audioCaptureCallback.onSamples(left, right);
+                    }
 
-                    outBytes[outIdx++] = (byte) (outL & 0xff);
-                    outBytes[outIdx++] = (byte) ((outL >> 8) & 0xff);
-                    outBytes[outIdx++] = (byte) (outR & 0xff);
-                    outBytes[outIdx++] = (byte) ((outR >> 8) & 0xff);
-
-                    pos += STEP;
+                    outBytes[outIdx++] = (byte) (sample & 0xff);
+                    outBytes[outIdx++] = (byte) ((sample >> 8) & 0xff);
                 }
 
-                // --- 2. ADVANCE POINTER & CLEAR ---
-                int framesConsumed = (int) pos;
-                pos -= framesConsumed;
-                int samplesConsumed = framesConsumed * 2;
+                // --- ADVANCE POINTER & CLEAR (like C++ memset + ptr advance) ---
+                int actualConsumed = Math.min(samplesToRead, available);
 
-                // We clear the buffer slots we theoretically consumed.
-                // Even if we played silence above, we must "consume" the empty space
-                // so the emulator knows it needs to fill it.
+                // Clear consumed slots
                 int clearPtr = r;
-                for (int k = 0; k < samplesConsumed; k++) {
+                for (int k = 0; k < actualConsumed; k++) {
                     sample_buffer[clearPtr] = 0;
                     clearPtr = (clearPtr + 1) % audio_buffer_size;
                 }
 
-                // ADVANCE! This unblocks the emulator immediately.
-                sample_read_ptr.set((r + samplesConsumed) % audio_buffer_size);
+                // Advance read pointer
+                sample_read_ptr.set((r + actualConsumed) % audio_buffer_size);
 
                 // --- 3. BLOCKING WRITE ---
                 // This call takes ~11.6ms.
                 // While this happens, the Emulator is running in parallel filling the buffer.
                 audioOut.write(outBytes, 0, outIdx);
 
-            } catch (Exception e) {
-                // Ignore
+            } catch (Exception ignore) {
             }
         }
     }
@@ -1593,10 +1756,15 @@ logger.log(Level.DEBUG, "thread end");
     });
 
     int MCU_OpenAudio(int deviceIndex, int pageSize, int pageNum) {
-        audio_buffer_size = 16384;
 
+        audio_page_size = (pageSize / 2) * 2; // must be even
+        audio_buffer_size = audio_page_size * pageNum;
+
+        // Use native SC-55 sample rate (66207 Hz) to avoid resampling artifacts
+        // This matches the C++ SDL version which also outputs at native rate
+        float sampleRate = (mcu_mk1 || mcu_jv880) ? 64000.0f : 66207.0f;
         AudioFormat spec = new AudioFormat(
-                44100.0f,
+                sampleRate,
                 16,
                 2,
                 true,
@@ -1648,9 +1816,11 @@ logger.log(Level.DEBUG, "thread end");
             sample[1] = Short.MAX_VALUE;
         else if (sample[1] < Short.MIN_VALUE)
             sample[1] = Short.MIN_VALUE;
-        sample_buffer[sample_write_ptr.get() + 0] = (short) sample[0];
-        sample_buffer[sample_write_ptr.get() + 1] = (short) sample[1];
-        sample_write_ptr.set((sample_write_ptr.get() + 2) % audio_buffer_size);
+        // Cache write pointer to reduce atomic operations (3 gets -> 1 get)
+        int wp = sample_write_ptr.get();
+        sample_buffer[wp] = (short) sample[0];
+        sample_buffer[wp + 1] = (short) sample[1];
+        sample_write_ptr.set((wp + 2) % audio_buffer_size);
     }
 
     void MCU_GA_SetGAInt(int line, boolean value) {
