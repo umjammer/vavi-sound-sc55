@@ -30,6 +30,12 @@ $ cp rom1.bin rom2.bin rom_sm.bin waverom1.nim waverom2.nim somewhere/roms/
 
 ## Usage
 
+```shell
+$ vi local.properties
+sc55.dir=somewhere/roms
+$ mvn -P run initialize antrun:run
+```
+
 ## References
 
  * https://github.com/nukeykt/Nuked-SC55/
@@ -43,6 +49,12 @@ $ cp rom1.bin rom2.bin rom_sm.bin waverom1.nim waverom2.nim somewhere/roms/
   * https://archive.org/download/jv880_rompack_v1
 
 ## TODO
+
+ * headless mode
+ * soundbank
+ * still has problem
+   * `passport.mid` ... using high threshold `FROZEN_VOICE_THRESHOLD` make sound muddy
+   * `Puyopuyo - 08 STICKER OF PUYOPUYO.mid` ... last fadeout part is weird
 
 ---
 

@@ -84,3 +84,5 @@ CMakeSettings.json
 /assets/
 tmp/
 local.properties
+GEMINI.md
+CLAUDE.md
