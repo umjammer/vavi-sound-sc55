@@ -171,7 +171,7 @@ class AudioQualityTest {
     }
 
     @Test
-    @Disabled("not used")
+    @Disabled("for ai iteration")
     @DisplayName("Compare Java audio quality with original C++ reference")
     void compareAudioQuality() throws Exception {
         // Check if reference file exists

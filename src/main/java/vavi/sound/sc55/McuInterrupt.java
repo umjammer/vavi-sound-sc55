@@ -119,7 +119,6 @@ class McuInterrupt {
     }
 
     void MCU_Interrupt_SetRequest(int interrupt, boolean value) {
-if (interrupt == 19) { System.err.printf("%d: interrupt: %x, value: %s%n", mcu.CC - 1, interrupt, value); }
         mcu.interrupt_pending[interrupt] = value;
     }
 
@@ -134,13 +133,11 @@ if (interrupt == 19) { System.err.printf("%d: interrupt: %x, value: %s%n", mcu.C
     }
 
     void MCU_Interrupt_TRAPA(int vector) {
-//{ System.err.printf("%d: vector: %x%n", mcu.CC - 1, vector); }
         mcu.trapa_pending[vector] = true;
     }
 
     void MCU_Interrupt_StartVector(int vector, int mask) {
         int address = mcu.MCU_GetVectorAddress(vector);
-if (vector == VECTOR_INTERNAL_INTERRUPT_D4.ordinal()) { System.err.printf("address: %x, vector: %x, mask: %x%n", address, vector, mask); }
         MCU_Interrupt_Start(mask);
         mcu.cp = (byte) (address >>> 16);
         mcu.pc = (short) address;

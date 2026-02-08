@@ -608,8 +608,6 @@ public class Mcu {
 
     byte[] dev_register = new byte[0x80];
 
-    private short[] ad_val = new short[4];
-    private byte ad_nibble = 0x00;
     private byte sw_pos = 3;
     private byte io_sd = 0x00;
 
@@ -962,7 +960,6 @@ READ_RCU:
         if ((address & 0x8_0000) != 0 && !mcu_jv880)
             address_rom |= 0x4_0000;
         byte page = (byte) ((address >>> 16) & 0xf);
-//if (CC == 800) { System.err.printf("address: %08x, address_rom: %04x, rom2_mask: %04x, page: %02x%n", address, address_rom, rom2_mask, page); }
         address &= 0xffff;
         byte ret = (byte) 0xff;
         switch (page) {
@@ -1218,12 +1215,9 @@ READ_RCU:
         MCU_Write(address + 1, (byte) (value & 0xff));
     }
 
-int CC = 0;
     void MCU_ReadInstruction() {
         byte operand = MCU_ReadCodeAdvance();
 
-//System.err.printf("%10d pc: %04x, oprand: %02x, sr: %04x%n", CC++, (pc - 1) & 0xffff, operand & 0xff, sr & 0xffff);
-//if (CC > 100000) { System.exit(1); }
         opcodes.MCU_DispatchOperand(operand);  // Switch-based dispatch (no interface overhead)
 
         if ((this.sr & Status.STATUS_T.v) != 0) {
@@ -1252,8 +1246,6 @@ int CC = 0;
         this.cycles = 0;
 
         Arrays.fill(this.dev_register, (byte) 0);
-
-        this.CC = 0;
     }
 
     void MCU_Reset() {
@@ -1289,11 +1281,6 @@ int CC = 0;
         }
     }
 
-    // MIDI message tracking for diagnostic
-    private int diagMidiStatus = 0;
-    private int diagMidiData1 = 0;
-    private int diagMidiByteCount = 0;
-
     public void MCU_PostUART(byte data) {
         // Warn if MIDI arrives before emulator is ready - these messages will be buffered
         // but could cause issues if there's a burst of messages waiting when processing starts
@@ -1301,34 +1288,7 @@ int CC = 0;
             logger.log(Level.WARNING, "MIDI status byte %02x received before emulator ready".formatted(data & 0xff));
         }
         uart_buffer[uart_write_ptr.get()] = data;
-logger.log(Level.DEBUG, "%02x, %d".formatted(data & 0xff, uart_write_ptr.get()));
         uart_write_ptr.set((uart_write_ptr.get() + 1) % uart_buffer_size);
-
-        // Track MIDI messages for diagnostic (commented out for normal operation)
-        // int d = data & 0xff;
-        // if (d >= 0x80) {
-        //     diagMidiStatus = d;
-        //     diagMidiByteCount = 1;
-        // } else {
-        //     diagMidiByteCount++;
-        //     if (diagMidiByteCount == 2) diagMidiData1 = d;
-        //     else if (diagMidiByteCount == 3) {
-        //         int cmd = diagMidiStatus & 0xf0;
-        //         int ch = diagMidiStatus & 0x0f;
-        //         if (cmd == 0x80) {
-        //             System.err.printf("MIDI_NOTE_OFF: ch=%d note=%d vel=%d mask=0x%08x%n",
-        //                     ch, diagMidiData1, d, pcm.voice_mask);
-        //         } else if (cmd == 0x90) {
-        //             if (d > 0) {
-        //                 System.err.printf("MIDI_NOTE_ON: ch=%d note=%d vel=%d mask=0x%08x%n",
-        //                         ch, diagMidiData1, d, pcm.voice_mask);
-        //             } else {
-        //                 System.err.printf("MIDI_NOTE_OFF: ch=%d note=%d vel=%d mask=0x%08x (via 0x90)%n",
-        //                         ch, diagMidiData1, d, pcm.voice_mask);
-        //             }
-        //         }
-        //     }
-        // }
     }
 
     void MCU_UpdateUART_RX() {
@@ -1362,8 +1322,6 @@ logger.log(Level.DEBUG, "%02x, %d".formatted(data & 0xff, uart_write_ptr.get()))
 
         dev_register[DEV_SSR.v] |= (byte) 0x80;
         interrupt.MCU_Interrupt_SetRequest(INTERRUPT_SOURCE_UART_TX.ordinal(), (dev_register[Dev.DEV_SCR.v] & 0x80) != 0);
-
-//        logger.log(Level.TRACE, "tx:%x\n", dev_register[DEV_TDR]);
     }
 
     private volatile boolean work_thread_run = false;
@@ -1415,70 +1373,14 @@ logger.log(Level.TRACE, "mutex lock");
 logger.log(Level.TRACE, "mutex unlock");
     }
 
-    // Diagnostic counters
-    private long diagStartTime = 0;
-    private long diagMcuIterations = 0;
-    private long diagLastReportTime = 0;
-    private long diagWaitCount = 0;
-    private long diagWaitTime = 0;
-
     // Batch size for MCU instruction execution
     // Larger = less overhead, but more latency. 64 instructions ≈ 1 PCM sample.
     private static final int MCU_BATCH_SIZE = 1;  // Must be 1 to match C++ timing exactly
-
-    // PCM clock rate (24 MHz for MCU, PCM runs in sync)
-    private static final long PCM_CLOCK_RATE = 24_000_000L;
-
-    /**
-     * Separate PCM synthesis thread - syncs with MCU cycles but runs in parallel.
-     * This allows MCU to run fast while PCM catches up in a separate thread.
-     */
-    void pcm_thread() {
-        logger.log(Level.DEBUG, "PCM thread start");
-        try {
-            while (work_thread_run) {
-                // Check buffer status - wait if buffer is almost full
-                int w = sample_write_ptr.get();
-                int r = sample_read_ptr.get();
-                int used = (w >= r) ? w - r : audio_buffer_size - r + w;
-                int free = audio_buffer_size - used - 1;
-
-                if (free < 256) {
-                    // Buffer full - wait for audio consumer to drain
-                    LockSupport.parkNanos(100_000); // 0.1ms
-                    continue;
-                }
-
-                // Align write pointer based on PCM config
-                if ((pcm.config_reg_3c & 0x40) != 0) {
-                    w &= ~3;
-                } else {
-                    w &= ~1;
-                }
-                sample_write_ptr.set(w);
-
-                // Run PCM to catch up with MCU cycles (not real-time)
-                // This ensures PCM only generates audio for state that MCU has processed
-                long targetCycles = this.cycles; // Use MCU's current cycle count
-                if (pcm.cycles < targetCycles) {
-                    pcm.PCM_Update(targetCycles);
-                } else {
-                    // PCM is caught up with MCU - wait briefly for MCU to advance
-                    LockSupport.parkNanos(50_000); // 0.05ms
-                }
-            }
-        } catch (Throwable t) {
-            logger.log(Level.ERROR, "PCM thread error: " + t.getMessage(), t);
-        }
-        logger.log(Level.DEBUG, "PCM thread end");
-    }
 
     void work_thread() {
 logger.log(Level.DEBUG, "task start: ex_ignore: " + ex_ignore + ", sleep: " + sleep);
 try {
         MCU_WorkThread_Lock();
-        diagStartTime = System.nanoTime();
-        diagLastReportTime = diagStartTime;
 
         while (work_thread_run) {
             // Check buffer status once per batch
@@ -1495,8 +1397,6 @@ try {
             int used = (w >= r) ? w - r : audio_buffer_size - r + w;
             int free = audio_buffer_size - used - 1;
             if (free < 256) {
-                diagWaitCount++;
-                long waitStart = System.nanoTime();
                 MCU_WorkThread_Unlock();
                 while (work_thread_run) {
                     w = sample_write_ptr.get();
@@ -1507,7 +1407,6 @@ try {
                     LockSupport.parkNanos(100_000);
                 }
                 MCU_WorkThread_Lock();
-                diagWaitTime += System.nanoTime() - waitStart;
             }
 
             // === BATCH EXECUTION: Run MCU instructions in tight loop ===
@@ -1522,7 +1421,6 @@ try {
                     MCU_ReadInstruction();
 
                 this.cycles += 12;
-                diagMcuIterations++;
             }
 
             // === SUBSYSTEM UPDATES: Called once per batch ===
@@ -1547,11 +1445,6 @@ try {
                 MCU_UpdateUART_RX();
                 MCU_UpdateUART_TX();
             }
-            // Debug: check if SM is being called
-            if (diagMcuIterations == 1) {
-                System.err.printf("SM_CHECK: mcu_mk1=%b, mcu_jv880=%b, mcu_scb55=%b, sm.cycles=%d, mcu.cycles=%d%n",
-                        mcu_mk1, mcu_jv880, mcu_scb55, sm.cycles, this.cycles);
-            }
 
             if ((dev_register[Dev.DEV_ADCSR.v] & 0x20) != 0)
                 MCU_UpdateAnalog(this.cycles);
@@ -1565,21 +1458,6 @@ try {
                         MCU_GA_SetGAInt(1, true);
                     }
                 }
-            }
-
-            // Diagnostic reporting every 2 seconds
-            long now = System.nanoTime();
-            long elapsed = now - diagLastReportTime;
-            if (elapsed >= 2_000_000_000L) {
-                double secs = elapsed / 1_000_000_000.0;
-                long mcuRate = (long)(diagMcuIterations / secs);
-                double waitPct = 100.0 * diagWaitTime / elapsed;
-                System.out.printf("DIAG: MCU=%,d/s, waits=%d (%.1f%% of time waiting)%n",
-                    mcuRate, diagWaitCount, waitPct);
-                diagMcuIterations = 0;
-                diagLastReportTime = now;
-                diagWaitCount = 0;
-                diagWaitTime = 0;
             }
         }
 

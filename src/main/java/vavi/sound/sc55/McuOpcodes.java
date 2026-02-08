@@ -36,9 +36,6 @@ package vavi.sound.sc55;
 
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
-import java.util.List;
-import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 
 import static java.lang.System.getLogger;
 import static vavi.sound.sc55.Mcu.Status.STATUS_C;
@@ -66,7 +63,6 @@ class McuOpcodes {
     }
 
     int MCU_SUB_Common(int t1, int t2, int c_bit, int siz) {
-//if (mcu.CC == 347) { System.err.printf("t1: %x, t2: %x, siz: %d, c_bit: %d, %n", t1, t2, siz, c_bit); }
         int st1, st2;
         boolean N, Z, C, V = false;
         if (siz != 0) {
@@ -104,7 +100,6 @@ class McuOpcodes {
             if (st1 < Byte.MIN_VALUE || st1 > Byte.MAX_VALUE)
                 V = true;
         }
-//if (mcu.CC == 347) { System.err.printf("t1: %x, t2: %x, st1: %x, st2: %x, siz: %d, c_bit: %d,  N:%s, C:%s, Z:%s, V:%s%n", t1, t2, st1, st2, siz, c_bit, N ? "+" : "-", C ? "+" : "-", Z ? "+" : "-", V ? "+" : "-"); }
         mcu.MCU_SetStatus(N, STATUS_N.v);
         mcu.MCU_SetStatus(Z, STATUS_Z.v);
         mcu.MCU_SetStatus(C, STATUS_C.v);
@@ -415,7 +410,6 @@ class McuOpcodes {
             if (opcode == 0x17) {
                 int disp = mcu.MCU_ReadCodeAdvance(); // signed
                 mcu.r[reg]--;
-//if (mcu.CC == 283) { System.err.printf("mcu.r[%d] = %04x, disp: %04x, opcode: %02x%n", reg, mcu.r[reg] & 0xffff, disp & 0xffff, opcode & 0xff); }
                 if (mcu.r[reg] != (short) 0xffff) {
                     mcu.pc += (short) disp;
                 }
@@ -649,7 +643,6 @@ class McuOpcodes {
         operand_data = (short) data;
         operand_status = 0;
 
-//if (mcu.CC == 790) { System.err.printf("opcode: %02x, opcode_reg: %02x, operand_ea: %04x%n", opcode & 0xff, opcode_reg & 0xff, operand_ea & 0xffff); }
         MCU_DispatchOpcode((byte) opcode, opcode_reg);  // Switch-based dispatch (no interface overhead)
     }
 
@@ -765,13 +758,11 @@ class McuOpcodes {
                 mcu.interrupt.MCU_Interrupt_Exception(EXCEPTION_SOURCE_ADDRESS_ERROR.ordinal());
             data = mcu.MCU_Read16(addr & 0xffff) & 0xffff;
             mcu.r[reg] = (short) data;
-//if (mcu.CC == 344) { System.err.printf("mcu.r[%d] = %04x, data: %04x, opcode: %02x, addr: %04x%n", reg, mcu.r[reg] & 0xffff, data, opcode & 0xff, addr & 0xffff); }
             MCU_SetStatusCommon(data, 1);
         } else {
             data = mcu.MCU_Read(addr & 0xffff) & 0xff;
             mcu.r[reg] &= ~0xff;
             mcu.r[reg] |= (short) data;
-//if (mcu.CC == 344) { System.err.printf("mcu.r[%d] = %04x, data: %04x, opcode: %02x, addr: %04x%n", reg, mcu.r[reg] & 0xffff, data, opcode & 0xff, addr & 0xffff); }
             MCU_SetStatusCommon(data, 0);
         }
     }
@@ -1000,7 +991,6 @@ logger.log(Level.DEBUG, "opcode_reg: %d, operand_type: %s".formatted(opcode_reg,
                     }
                 } else {
                     data = mcu.r[opcode_reg] & 0xffff;
-if (List.of(5900, 5901, 5902).contains(mcu.CC)) { System.err.printf("opcode_reg: %02x, data: %x%n", opcode_reg & 0xff, data); }
                     MCU_Operand_Write(data);
                     MCU_SetStatusCommon(data, operand_size);
                 }
@@ -1329,300 +1319,4 @@ if (List.of(5900, 5901, 5902).contains(mcu.CC)) { System.err.printf("opcode_reg:
             mcu.r[opcode_reg] |= t1 & 0xff;
         }
     }
-
-    @SuppressWarnings("unchecked")
-    Consumer<Byte>[] MCU_Operand_Table = List.<Consumer<Byte>>of(
-            this::MCU_Operand_Nop, // 00
-            this::MCU_Jump_JMP, // 01
-            this::MCU_LDM, // 02
-            this::MCU_Jump_PJSR, // 03
-            this::MCU_Operand_General, // 04
-            this::MCU_Operand_General, // 05
-            this::MCU_Jump_JMP, // 06
-            this::MCU_Jump_JMP, // 07
-            this::MCU_TRAPA, // 08
-            this::MCU_Operand_NotImplemented, // 09
-            this::MCU_Jump_RTE, // 0A
-            this::MCU_Operand_NotImplemented, // 0B
-            this::MCU_Operand_General, // 0C
-            this::MCU_Operand_General, // 0D
-            this::MCU_Jump_BSR, // 0E
-            this::MCU_Operand_NotImplemented, // 0F
-            this::MCU_Jump_JMP, // 10
-            this::MCU_Jump_JMP, // 11
-            this::MCU_STM, // 12
-            this::MCU_Jump_PJMP, // 13
-            this::MCU_Jump_RTD, // 14
-            this::MCU_Operand_General, // 15
-            this::MCU_Operand_NotImplemented, // 16
-            this::MCU_Operand_NotImplemented, // 17
-            this::MCU_Jump_JSR, // 18
-            this::MCU_Jump_RTS, // 19
-            this::MCU_Operand_Sleep, // 1A
-            this::MCU_Operand_NotImplemented, // 1B
-            this::MCU_Jump_RTD, // 1C
-            this::MCU_Operand_General, // 1D
-            this::MCU_Jump_BSR, // 1E
-            this::MCU_Operand_NotImplemented, // 1F
-            this::MCU_Jump_Bcc, // 20
-            this::MCU_Jump_Bcc, // 21
-            this::MCU_Jump_Bcc, // 22
-            this::MCU_Jump_Bcc, // 23
-            this::MCU_Jump_Bcc, // 24
-            this::MCU_Jump_Bcc, // 25
-            this::MCU_Jump_Bcc, // 26
-            this::MCU_Jump_Bcc, // 27
-            this::MCU_Jump_Bcc, // 28
-            this::MCU_Jump_Bcc, // 29
-            this::MCU_Jump_Bcc, // 2A
-            this::MCU_Jump_Bcc, // 2B
-            this::MCU_Jump_Bcc, // 2C
-            this::MCU_Jump_Bcc, // 2D
-            this::MCU_Jump_Bcc, // 2E
-            this::MCU_Jump_Bcc, // 2F
-            this::MCU_Jump_Bcc, // 30
-            this::MCU_Jump_Bcc, // 31
-            this::MCU_Jump_Bcc, // 32
-            this::MCU_Jump_Bcc, // 33
-            this::MCU_Jump_Bcc, // 34
-            this::MCU_Jump_Bcc, // 35
-            this::MCU_Jump_Bcc, // 36
-            this::MCU_Jump_Bcc, // 37
-            this::MCU_Jump_Bcc, // 38
-            this::MCU_Jump_Bcc, // 39
-            this::MCU_Jump_Bcc, // 3A
-            this::MCU_Jump_Bcc, // 3B
-            this::MCU_Jump_Bcc, // 3C
-            this::MCU_Jump_Bcc, // 3D
-            this::MCU_Jump_Bcc, // 3E
-            this::MCU_Jump_Bcc, // 3F
-            this::MCU_Opcode_Short_CMP, // 40
-            this::MCU_Opcode_Short_CMP, // 41
-            this::MCU_Opcode_Short_CMP, // 42
-            this::MCU_Opcode_Short_CMP, // 43
-            this::MCU_Opcode_Short_CMP, // 44
-            this::MCU_Opcode_Short_CMP, // 45
-            this::MCU_Opcode_Short_CMP, // 46
-            this::MCU_Opcode_Short_CMP, // 47
-            this::MCU_Opcode_Short_CMP, // 48
-            this::MCU_Opcode_Short_CMP, // 49
-            this::MCU_Opcode_Short_CMP, // 4A
-            this::MCU_Opcode_Short_CMP, // 4B
-            this::MCU_Opcode_Short_CMP, // 4C
-            this::MCU_Opcode_Short_CMP, // 4D
-            this::MCU_Opcode_Short_CMP, // 4E
-            this::MCU_Opcode_Short_CMP, // 4F
-            this::MCU_Opcode_Short_MOVE, // 50
-            this::MCU_Opcode_Short_MOVE, // 51
-            this::MCU_Opcode_Short_MOVE, // 52
-            this::MCU_Opcode_Short_MOVE, // 53
-            this::MCU_Opcode_Short_MOVE, // 54
-            this::MCU_Opcode_Short_MOVE, // 55
-            this::MCU_Opcode_Short_MOVE, // 56
-            this::MCU_Opcode_Short_MOVE, // 57
-            this::MCU_Opcode_Short_MOVI, // 58
-            this::MCU_Opcode_Short_MOVI, // 59
-            this::MCU_Opcode_Short_MOVI, // 5A
-            this::MCU_Opcode_Short_MOVI, // 5B
-            this::MCU_Opcode_Short_MOVI, // 5C
-            this::MCU_Opcode_Short_MOVI, // 5D
-            this::MCU_Opcode_Short_MOVI, // 5E
-            this::MCU_Opcode_Short_MOVI, // 5F
-            this::MCU_Opcode_Short_MOVL, // 60
-            this::MCU_Opcode_Short_MOVL, // 61
-            this::MCU_Opcode_Short_MOVL, // 62
-            this::MCU_Opcode_Short_MOVL, // 63
-            this::MCU_Opcode_Short_MOVL, // 64
-            this::MCU_Opcode_Short_MOVL, // 65
-            this::MCU_Opcode_Short_MOVL, // 66
-            this::MCU_Opcode_Short_MOVL, // 67
-            this::MCU_Opcode_Short_MOVL, // 68
-            this::MCU_Opcode_Short_MOVL, // 69
-            this::MCU_Opcode_Short_MOVL, // 6A
-            this::MCU_Opcode_Short_MOVL, // 6B
-            this::MCU_Opcode_Short_MOVL, // 6C
-            this::MCU_Opcode_Short_MOVL, // 6D
-            this::MCU_Opcode_Short_MOVL, // 6E
-            this::MCU_Opcode_Short_MOVL, // 6F
-            this::MCU_Opcode_Short_MOVS, // 70
-            this::MCU_Opcode_Short_MOVS, // 71
-            this::MCU_Opcode_Short_MOVS, // 72
-            this::MCU_Opcode_Short_MOVS, // 73
-            this::MCU_Opcode_Short_MOVS, // 74
-            this::MCU_Opcode_Short_MOVS, // 75
-            this::MCU_Opcode_Short_MOVS, // 76
-            this::MCU_Opcode_Short_MOVS, // 77
-            this::MCU_Opcode_Short_MOVS, // 78
-            this::MCU_Opcode_Short_MOVS, // 79
-            this::MCU_Opcode_Short_MOVS, // 7A
-            this::MCU_Opcode_Short_MOVS, // 7B
-            this::MCU_Opcode_Short_MOVS, // 7C
-            this::MCU_Opcode_Short_MOVS, // 7D
-            this::MCU_Opcode_Short_MOVS, // 7E
-            this::MCU_Opcode_Short_MOVS, // 7F
-            this::MCU_Opcode_Short_MOVF, // 80
-            this::MCU_Opcode_Short_MOVF, // 81
-            this::MCU_Opcode_Short_MOVF, // 82
-            this::MCU_Opcode_Short_MOVF, // 83
-            this::MCU_Opcode_Short_MOVF, // 84
-            this::MCU_Opcode_Short_MOVF, // 85
-            this::MCU_Opcode_Short_MOVF, // 86
-            this::MCU_Opcode_Short_MOVF, // 87
-            this::MCU_Opcode_Short_MOVF, // 88
-            this::MCU_Opcode_Short_MOVF, // 89
-            this::MCU_Opcode_Short_MOVF, // 8A
-            this::MCU_Opcode_Short_MOVF, // 8B
-            this::MCU_Opcode_Short_MOVF, // 8C
-            this::MCU_Opcode_Short_MOVF, // 8D
-            this::MCU_Opcode_Short_MOVF, // 8E
-            this::MCU_Opcode_Short_MOVF, // 8F
-            this::MCU_Opcode_Short_MOVF, // 90
-            this::MCU_Opcode_Short_MOVF, // 91
-            this::MCU_Opcode_Short_MOVF, // 92
-            this::MCU_Opcode_Short_MOVF, // 93
-            this::MCU_Opcode_Short_MOVF, // 94
-            this::MCU_Opcode_Short_MOVF, // 95
-            this::MCU_Opcode_Short_MOVF, // 96
-            this::MCU_Opcode_Short_MOVF, // 97
-            this::MCU_Opcode_Short_MOVF, // 98
-            this::MCU_Opcode_Short_MOVF, // 99
-            this::MCU_Opcode_Short_MOVF, // 9A
-            this::MCU_Opcode_Short_MOVF, // 9B
-            this::MCU_Opcode_Short_MOVF, // 9C
-            this::MCU_Opcode_Short_MOVF, // 9D
-            this::MCU_Opcode_Short_MOVF, // 9E
-            this::MCU_Opcode_Short_MOVF, // 9F
-            this::MCU_Operand_General, // A0
-            this::MCU_Operand_General, // A1
-            this::MCU_Operand_General, // A2
-            this::MCU_Operand_General, // A3
-            this::MCU_Operand_General, // A4
-            this::MCU_Operand_General, // A5
-            this::MCU_Operand_General, // A6
-            this::MCU_Operand_General, // A7
-            this::MCU_Operand_General, // A8
-            this::MCU_Operand_General, // A9
-            this::MCU_Operand_General, // AA
-            this::MCU_Operand_General, // AB
-            this::MCU_Operand_General, // AC
-            this::MCU_Operand_General, // AD
-            this::MCU_Operand_General, // AE
-            this::MCU_Operand_General, // AF
-            this::MCU_Operand_General, // B0
-            this::MCU_Operand_General, // B1
-            this::MCU_Operand_General, // B2
-            this::MCU_Operand_General, // B3
-            this::MCU_Operand_General, // B4
-            this::MCU_Operand_General, // B5
-            this::MCU_Operand_General, // B6
-            this::MCU_Operand_General, // B7
-            this::MCU_Operand_General, // B8
-            this::MCU_Operand_General, // B9
-            this::MCU_Operand_General, // BA
-            this::MCU_Operand_General, // BB
-            this::MCU_Operand_General, // BC
-            this::MCU_Operand_General, // BD
-            this::MCU_Operand_General, // BE
-            this::MCU_Operand_General, // BF
-            this::MCU_Operand_General, // C0
-            this::MCU_Operand_General, // C1
-            this::MCU_Operand_General, // C2
-            this::MCU_Operand_General, // C3
-            this::MCU_Operand_General, // C4
-            this::MCU_Operand_General, // C5
-            this::MCU_Operand_General, // C6
-            this::MCU_Operand_General, // C7
-            this::MCU_Operand_General, // C8
-            this::MCU_Operand_General, // C9
-            this::MCU_Operand_General, // CA
-            this::MCU_Operand_General, // CB
-            this::MCU_Operand_General, // CC
-            this::MCU_Operand_General, // CD
-            this::MCU_Operand_General, // CE
-            this::MCU_Operand_General, // CF
-            this::MCU_Operand_General, // D0
-            this::MCU_Operand_General, // D1
-            this::MCU_Operand_General, // D2
-            this::MCU_Operand_General, // D3
-            this::MCU_Operand_General, // D4
-            this::MCU_Operand_General, // D5
-            this::MCU_Operand_General, // D6
-            this::MCU_Operand_General, // D7
-            this::MCU_Operand_General, // D8
-            this::MCU_Operand_General, // D9
-            this::MCU_Operand_General, // DA
-            this::MCU_Operand_General, // DB
-            this::MCU_Operand_General, // DC
-            this::MCU_Operand_General, // DD
-            this::MCU_Operand_General, // DE
-            this::MCU_Operand_General, // DF
-            this::MCU_Operand_General, // E0
-            this::MCU_Operand_General, // E1
-            this::MCU_Operand_General, // E2
-            this::MCU_Operand_General, // E3
-            this::MCU_Operand_General, // E4
-            this::MCU_Operand_General, // E5
-            this::MCU_Operand_General, // E6
-            this::MCU_Operand_General, // E7
-            this::MCU_Operand_General, // E8
-            this::MCU_Operand_General, // E9
-            this::MCU_Operand_General, // EA
-            this::MCU_Operand_General, // EB
-            this::MCU_Operand_General, // EC
-            this::MCU_Operand_General, // ED
-            this::MCU_Operand_General, // EE
-            this::MCU_Operand_General, // EF
-            this::MCU_Operand_General, // F0
-            this::MCU_Operand_General, // F1
-            this::MCU_Operand_General, // F2
-            this::MCU_Operand_General, // F3
-            this::MCU_Operand_General, // F4
-            this::MCU_Operand_General, // F5
-            this::MCU_Operand_General, // F6
-            this::MCU_Operand_General, // F7
-            this::MCU_Operand_General, // F8
-            this::MCU_Operand_General, // F9
-            this::MCU_Operand_General, // FA
-            this::MCU_Operand_General, // FB
-            this::MCU_Operand_General, // FC
-            this::MCU_Operand_General, // FD
-            this::MCU_Operand_General, // FE
-            this::MCU_Operand_General // FF
-    ).toArray(Consumer[]::new);
-
-    @SuppressWarnings("unchecked")
-    BiConsumer<Byte, Byte>[] MCU_Opcode_Table = List.<BiConsumer<Byte, Byte>>of(
-            this::MCU_Opcode_MOVG_Immediate, // 00
-            this::MCU_Opcode_ADDQ, // 01
-            this::MCU_Opcode_CLR, // 02
-            this::MCU_Opcode_SHLR, // 03
-            this::MCU_Opcode_ADD, // 04
-            this::MCU_Opcode_ADDS, // 05
-            this::MCU_Opcode_SUB, // 06
-            this::MCU_Opcode_SUBS, // 07
-            this::MCU_Opcode_OR, // 08
-            this::MCU_Opcode_BSET_ORC, // 09
-            this::MCU_Opcode_AND, // 0A
-            this::MCU_Opcode_BCLR_ANDC, // 0B
-            this::MCU_Opcode_XOR, // 0C
-            this::MCU_Opcode_NotImplemented, // 0D
-            this::MCU_Opcode_CMP, // 0E
-            this::MCU_Opcode_BTST, // 0F
-            this::MCU_Opcode_MOVG, // 10
-            this::MCU_Opcode_LDC, // 11
-            this::MCU_Opcode_MOVG, // 12
-            this::MCU_Opcode_STC, // 13
-            this::MCU_Opcode_ADDX, // 14
-            this::MCU_Opcode_MULXU, // 15
-            this::MCU_Opcode_SUBX, // 16
-            this::MCU_Opcode_DIVXU, // 17
-            this::MCU_Opcode_BSET, // 18
-            this::MCU_Opcode_BSET, // 19
-            this::MCU_Opcode_BCLR, // 1A
-            this::MCU_Opcode_BCLR, // 1B
-            this::MCU_Opcode_BNOTI, // 1C
-            this::MCU_Opcode_BNOTI, // 1D
-            this::MCU_Opcode_BTSTI, // 1E
-            this::MCU_Opcode_BTSTI // 1F
-    ).toArray(BiConsumer[]::new);
 }

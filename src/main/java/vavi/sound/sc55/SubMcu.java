@@ -36,8 +36,6 @@ package vavi.sound.sc55;
 
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
-import java.util.List;
-import java.util.function.Consumer;
 
 import static java.lang.System.getLogger;
 import static vavi.sound.sc55.SubMcu.SmDev.SM_DEV_COLLISION;
@@ -757,35 +755,18 @@ class SubMcu {
         this.pc = newpc;
     }
 
-    void SM_Opcode_CMP(byte opcode) // c9, c5, d5, cd, dd, d9, c1, d1
-    {
-        byte operand = 0;
-        switch (opcode & 0xff) {
-            case 0xc9:
-                operand = SM_ReadAdvance();
-                break;
-            case 0xc5:
-                operand = SM_Read((short) (SM_ReadAdvance() & 0xff));
-                break;
-            case 0xd5:
-                operand = SM_Read((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff)); // byte size
-                break;
-            case 0xcd:
-                operand = SM_Read(SM_ReadAdvance16());
-                break;
-            case 0xdd:
-                operand = SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.x & 0xff)));
-                break;
-            case 0xd9:
-                operand = SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.y & 0xff)));
-                break;
-            case 0xc1:
-                operand = SM_Read(SM_Read16((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff))); // byte size
-                break;
-            case 0xd1:
-                operand = SM_Read((short) (SM_Read16((short) (SM_ReadAdvance() & 0xff)) + (this.y & 0xff)));
-                break;
-        }
+    void SM_Opcode_CMP(byte opcode) { // c9, c5, d5, cd, dd, d9, c1, d1
+        byte operand = switch (opcode & 0xff) {
+            case 0xc9 -> SM_ReadAdvance();
+            case 0xc5 -> SM_Read((short) (SM_ReadAdvance() & 0xff));
+            case 0xd5 -> SM_Read((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff)); // byte size
+            case 0xcd -> SM_Read(SM_ReadAdvance16());
+            case 0xdd -> SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.x & 0xff)));
+            case 0xd9 -> SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.y & 0xff)));
+            case 0xc1 -> SM_Read(SM_Read16((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff))); // byte size
+            case 0xd1 -> SM_Read((short) (SM_Read16((short) (SM_ReadAdvance() & 0xff)) + (this.y & 0xff)));
+            default -> 0;
+        };
         int diff = (this.a & 0xff) - (operand & 0xff);
         SM_SetStatus((diff & 0x100) == 0 ? 1 : 0, SM_STATUS_C.v);
         SM_Update_NZ((byte) (diff & 0xff));
@@ -827,32 +808,17 @@ class SubMcu {
             val = SM_Read((short) (this.x & 0xff));
         }
 
-        switch (opcode) {
-            case 0x09:
-                val2 = SM_ReadAdvance();
-                break;
-            case 0x05:
-                val2 = SM_Read((short) (SM_ReadAdvance() & 0xff));
-                break;
-            case 0x15:
-                val2 = SM_Read((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff)); // byte size
-                break;
-            case 0x0d:
-                val2 = SM_Read(SM_ReadAdvance16());
-                break;
-            case 0x1d:
-                val2 = SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.x & 0xff)));
-                break;
-            case 0x19:
-                val2 = SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.y & 0xff)));
-                break;
-            case 0x01:
-                val2 = SM_Read(SM_Read16((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff))); // byte size
-                break;
-            case 0x11:
-                val2 = SM_Read((short) (SM_Read16((short) (SM_ReadAdvance() & 0xff)) + (this.y & 0xff)));
-                break;
-        }
+        val2 = switch (opcode) {
+            case 0x09 -> SM_ReadAdvance();
+            case 0x05 -> SM_Read((short) (SM_ReadAdvance() & 0xff));
+            case 0x15 -> SM_Read((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff)); // byte size
+            case 0x0d -> SM_Read(SM_ReadAdvance16());
+            case 0x1d -> SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.x & 0xff)));
+            case 0x19 -> SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.y & 0xff)));
+            case 0x01 -> SM_Read(SM_Read16((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff))); // byte size
+            case 0x11 -> SM_Read((short) (SM_Read16((short) (SM_ReadAdvance() & 0xff)) + (this.y & 0xff)));
+            default -> val2;
+        };
 
         val |= val2;
 
@@ -899,35 +865,23 @@ class SubMcu {
     }
 
     void SM_Opcode_STX(byte opcode) { // 86 96 8e
-        short dest = 0;
-        switch (opcode & 0xff) {
-            case 0x86:
-                dest = (short) (SM_ReadAdvance() & 0xff);
-                break;
-            case 0x96:
-                dest = (short) ((SM_ReadAdvance() & 0xff) + (this.x & 0xff));
-                break;
-            case 0x8e:
-                dest = SM_ReadAdvance16();
-                break;
-        }
+        short dest = switch (opcode & 0xff) {
+            case 0x86 -> (short) (SM_ReadAdvance() & 0xff);
+            case 0x96 -> (short) ((SM_ReadAdvance() & 0xff) + (this.x & 0xff));
+            case 0x8e -> SM_ReadAdvance16();
+            default -> 0;
+        };
 
         SM_Write(dest, this.x);
     }
 
     void SM_Opcode_STY(byte opcode) { // 84 8c 94
-        short dest = 0;
-        switch (opcode & 0xff) {
-            case 0x84:
-                dest = (short) (SM_ReadAdvance() & 0xff);
-                break;
-            case 0x94:
-                dest = (short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff);
-                break;
-            case 0x8c:
-                dest = SM_ReadAdvance16();
-                break;
-        }
+        short dest = switch (opcode & 0xff) {
+            case 0x84 -> (short) (SM_ReadAdvance() & 0xff);
+            case 0x94 -> (short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff);
+            case 0x8c -> SM_ReadAdvance16();
+            default -> 0;
+        };
 
         SM_Write(dest, this.y);
     }
@@ -960,32 +914,17 @@ class SubMcu {
             val = SM_Read((short) (this.x & 0xff));
         }
 
-        switch (opcode) {
-            case 0x29:
-                val2 = SM_ReadAdvance();
-                break;
-            case 0x25:
-                val2 = SM_Read((short) (SM_ReadAdvance() & 0xff));
-                break;
-            case 0x35:
-                val2 = SM_Read((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff)); // byte size
-                break;
-            case 0x2d:
-                val2 = SM_Read(SM_ReadAdvance16());
-                break;
-            case 0x3d:
-                val2 = SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.x & 0xff)));
-                break;
-            case 0x39:
-                val2 = SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.y & 0xff)));
-                break;
-            case 0x21:
-                val2 = SM_Read(SM_Read16((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff))); // byte size
-                break;
-            case 0x31:
-                val2 = SM_Read((short) (SM_Read16((short) (SM_ReadAdvance() & 0xff)) + (this.y & 0xff)));
-                break;
-        }
+        val2 = switch (opcode) {
+            case 0x29 -> SM_ReadAdvance();
+            case 0x25 -> SM_Read((short) (SM_ReadAdvance() & 0xff));
+            case 0x35 -> SM_Read((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff)); // byte size
+            case 0x2d -> SM_Read(SM_ReadAdvance16());
+            case 0x3d -> SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.x & 0xff)));
+            case 0x39 -> SM_Read((short) ((SM_ReadAdvance16() & 0xffff) + (this.y & 0xff)));
+            case 0x21 -> SM_Read(SM_Read16((short) (((SM_ReadAdvance() & 0xff) + (this.x & 0xff)) & 0xff))); // byte size
+            case 0x31 -> SM_Read((short) (SM_Read16((short) (SM_ReadAdvance() & 0xff)) + (this.y & 0xff)));
+            default -> val2;
+        };
 
         val &= val2;
 
@@ -1025,266 +964,6 @@ class SubMcu {
         SM_Write(dest, val);
         SM_Update_NZ(val);
     }
-
-    @SuppressWarnings("unchecked")
-    Consumer<Byte>[] SM_Opcode_Table = List.<Consumer<Byte>>of(
-            this::SM_Opcode_NotImplemented, // 00
-            this::SM_Opcode_ORA, // 01
-            this::SM_Opcode_JSR, // 02
-            this::SM_Opcode_BBC_BBS, // 03
-            this::SM_Opcode_NotImplemented, // 04
-            this::SM_Opcode_ORA, // 05
-            this::SM_Opcode_NotImplemented, // 06
-            this::SM_Opcode_BBC_BBS, // 07
-            this::SM_Opcode_NotImplemented, // 08
-            this::SM_Opcode_ORA, // 09
-            this::SM_Opcode_NotImplemented, // 0a
-            this::SM_Opcode_SEB_CLB, // 0b
-            this::SM_Opcode_NotImplemented, // 0c
-            this::SM_Opcode_ORA, // 0d
-            this::SM_Opcode_NotImplemented, // 0e
-            this::SM_Opcode_SEB_CLB, // 0f
-            this::SM_Opcode_BPL, // 10
-            this::SM_Opcode_ORA, // 11
-            this::SM_Opcode_CLT, // 12
-            this::SM_Opcode_BBC_BBS, // 13
-            this::SM_Opcode_NotImplemented, // 14
-            this::SM_Opcode_ORA, // 15
-            this::SM_Opcode_NotImplemented, // 16
-            this::SM_Opcode_BBC_BBS, // 17
-            this::SM_Opcode_CLC, // 18
-            this::SM_Opcode_ORA, // 19
-            this::SM_Opcode_DEC, // 1a
-            this::SM_Opcode_SEB_CLB, // 1b
-            this::SM_Opcode_NotImplemented, // 1c
-            this::SM_Opcode_ORA, // 1d
-            this::SM_Opcode_NotImplemented, // 1e
-            this::SM_Opcode_SEB_CLB, // 1f
-            this::SM_Opcode_JSR, // 20
-            this::SM_Opcode_AND, // 21
-            this::SM_Opcode_JSR, // 22
-            this::SM_Opcode_BBC_BBS, // 23
-            this::SM_Opcode_NotImplemented, // 24
-            this::SM_Opcode_AND, // 25
-            this::SM_Opcode_NotImplemented, // 26
-            this::SM_Opcode_BBC_BBS, // 27
-            this::SM_Opcode_NotImplemented, // 28
-            this::SM_Opcode_AND, // 29
-            this::SM_Opcode_NotImplemented, // 2a
-            this::SM_Opcode_SEB_CLB, // 2b
-            this::SM_Opcode_NotImplemented, // 2c
-            this::SM_Opcode_AND, // 2d
-            this::SM_Opcode_NotImplemented, // 2e
-            this::SM_Opcode_SEB_CLB, // 2f
-            this::SM_Opcode_NotImplemented, // 30
-            this::SM_Opcode_AND, // 31
-            this::SM_Opcode_NotImplemented, // 32
-            this::SM_Opcode_BBC_BBS, // 33
-            this::SM_Opcode_NotImplemented, // 34
-            this::SM_Opcode_AND, // 35
-            this::SM_Opcode_NotImplemented, // 36
-            this::SM_Opcode_BBC_BBS, // 37
-            this::SM_Opcode_SEC, // 38
-            this::SM_Opcode_AND, // 39
-            this::SM_Opcode_INC, // 3a
-            this::SM_Opcode_SEB_CLB, // 3b
-            this::SM_Opcode_LDM, // 3c
-            this::SM_Opcode_AND, // 3d
-            this::SM_Opcode_NotImplemented, // 3e
-            this::SM_Opcode_SEB_CLB, // 3f
-            this::SM_Opcode_RTI, // 40
-            this::SM_Opcode_NotImplemented, // 41
-            this::SM_Opcode_STP, // 42
-            this::SM_Opcode_BBC_BBS, // 43
-            this::SM_Opcode_NotImplemented, // 44
-            this::SM_Opcode_NotImplemented, // 45
-            this::SM_Opcode_NotImplemented, // 46
-            this::SM_Opcode_BBC_BBS, // 47
-            this::SM_Opcode_PHA, // 48
-            this::SM_Opcode_NotImplemented, // 49
-            this::SM_Opcode_NotImplemented, // 4a
-            this::SM_Opcode_SEB_CLB, // 4b
-            this::SM_Opcode_JMP, // 4c
-            this::SM_Opcode_NotImplemented, // 4d
-            this::SM_Opcode_NotImplemented, // 4e
-            this::SM_Opcode_SEB_CLB, // 4f
-            this::SM_Opcode_NotImplemented, // 50
-            this::SM_Opcode_NotImplemented, // 51
-            this::SM_Opcode_NotImplemented, // 52
-            this::SM_Opcode_BBC_BBS, // 53
-            this::SM_Opcode_NotImplemented, // 54
-            this::SM_Opcode_NotImplemented, // 55
-            this::SM_Opcode_NotImplemented, // 56
-            this::SM_Opcode_BBC_BBS, // 57
-            this::SM_Opcode_CLI, // 58
-            this::SM_Opcode_NotImplemented, // 59
-            this::SM_Opcode_NotImplemented, // 5a
-            this::SM_Opcode_SEB_CLB, // 5b
-            this::SM_Opcode_NotImplemented, // 5c
-            this::SM_Opcode_NotImplemented, // 5d
-            this::SM_Opcode_NotImplemented, // 5e
-            this::SM_Opcode_SEB_CLB, // 5f
-            this::SM_Opcode_RTS, // 60
-            this::SM_Opcode_NotImplemented, // 61
-            this::SM_Opcode_NotImplemented, // 62
-            this::SM_Opcode_BBC_BBS, // 63
-            this::SM_Opcode_NotImplemented, // 64
-            this::SM_Opcode_NotImplemented, // 65
-            this::SM_Opcode_NotImplemented, // 66
-            this::SM_Opcode_BBC_BBS, // 67
-            this::SM_Opcode_PLA, // 68
-            this::SM_Opcode_NotImplemented, // 69
-            this::SM_Opcode_NotImplemented, // 6a
-            this::SM_Opcode_SEB_CLB, // 6b
-            this::SM_Opcode_JMP, // 6c
-            this::SM_Opcode_NotImplemented, // 6d
-            this::SM_Opcode_NotImplemented, // 6e
-            this::SM_Opcode_SEB_CLB, // 6f
-            this::SM_Opcode_NotImplemented, // 70
-            this::SM_Opcode_NotImplemented, // 71
-            this::SM_Opcode_NotImplemented, // 72
-            this::SM_Opcode_BBC_BBS, // 73
-            this::SM_Opcode_NotImplemented, // 74
-            this::SM_Opcode_NotImplemented, // 75
-            this::SM_Opcode_NotImplemented, // 76
-            this::SM_Opcode_BBC_BBS, // 77
-            this::SM_Opcode_SEI, // 78
-            this::SM_Opcode_NotImplemented, // 79
-            this::SM_Opcode_NotImplemented, // 7a
-            this::SM_Opcode_SEB_CLB, // 7b
-            this::SM_Opcode_NotImplemented, // 7c
-            this::SM_Opcode_NotImplemented, // 7d
-            this::SM_Opcode_NotImplemented, // 7e
-            this::SM_Opcode_SEB_CLB, // 7f
-            this::SM_Opcode_BRA, // 80
-            this::SM_Opcode_STA, // 81
-            this::SM_Opcode_NotImplemented, // 82
-            this::SM_Opcode_BBC_BBS, // 83
-            this::SM_Opcode_STY, // 84
-            this::SM_Opcode_STA, // 85
-            this::SM_Opcode_STX, // 86
-            this::SM_Opcode_BBC_BBS, // 87
-            this::SM_Opcode_NotImplemented, // 88
-            this::SM_Opcode_NotImplemented, // 89
-            this::SM_Opcode_TXA, // 8a
-            this::SM_Opcode_SEB_CLB, // 8b
-            this::SM_Opcode_STY, // 8c
-            this::SM_Opcode_STA, // 8d
-            this::SM_Opcode_STX, // 8e
-            this::SM_Opcode_SEB_CLB, // 8f
-            this::SM_Opcode_BCC, // 90
-            this::SM_Opcode_STA, // 91
-            this::SM_Opcode_NotImplemented, // 92
-            this::SM_Opcode_BBC_BBS, // 93
-            this::SM_Opcode_STY, // 94
-            this::SM_Opcode_STA, // 95
-            this::SM_Opcode_STX, // 96
-            this::SM_Opcode_BBC_BBS, // 97
-            this::SM_Opcode_NotImplemented, // 98
-            this::SM_Opcode_STA, // 99
-            this::SM_Opcode_TXS, // 9a
-            this::SM_Opcode_SEB_CLB, // 9b
-            this::SM_Opcode_NotImplemented, // 9c
-            this::SM_Opcode_STA, // 9d
-            this::SM_Opcode_NotImplemented, // 9e
-            this::SM_Opcode_SEB_CLB, // 9f
-            this::SM_Opcode_LDY, // a0
-            this::SM_Opcode_LDA, // a1
-            this::SM_Opcode_LDX, // a2
-            this::SM_Opcode_BBC_BBS, // a3
-            this::SM_Opcode_LDY, // a4
-            this::SM_Opcode_LDA, // a5
-            this::SM_Opcode_LDX, // a6
-            this::SM_Opcode_BBC_BBS, // a7
-            this::SM_Opcode_NotImplemented, // a8
-            this::SM_Opcode_LDA, // a9
-            this::SM_Opcode_TAX, // aa
-            this::SM_Opcode_SEB_CLB, // ab
-            this::SM_Opcode_LDY, // ac
-            this::SM_Opcode_LDA, // ad
-            this::SM_Opcode_LDX, // ae
-            this::SM_Opcode_SEB_CLB, // af
-            this::SM_Opcode_BCS, // b0
-            this::SM_Opcode_LDA, // b1
-            this::SM_Opcode_JMP, // b2
-            this::SM_Opcode_BBC_BBS, // b3
-            this::SM_Opcode_LDY, // b4
-            this::SM_Opcode_LDA, // b5
-            this::SM_Opcode_LDX, // b6
-            this::SM_Opcode_BBC_BBS, // b7
-            this::SM_Opcode_NotImplemented, // b8
-            this::SM_Opcode_LDA, // b9
-            this::SM_Opcode_NotImplemented, // ba
-            this::SM_Opcode_SEB_CLB, // bb
-            this::SM_Opcode_LDY, // bc
-            this::SM_Opcode_LDA, // bd
-            this::SM_Opcode_LDX, // be
-            this::SM_Opcode_SEB_CLB, // bf
-            this::SM_Opcode_CPY, // c0
-            this::SM_Opcode_CMP, // c1
-            this::SM_Opcode_NotImplemented, // c2
-            this::SM_Opcode_BBC_BBS, // c3
-            this::SM_Opcode_CPY, // c4
-            this::SM_Opcode_CMP, // c5
-            this::SM_Opcode_DEC, // c6
-            this::SM_Opcode_BBC_BBS, // c7
-            this::SM_Opcode_INY, // c8
-            this::SM_Opcode_CMP, // c9
-            this::SM_Opcode_NotImplemented, // ca
-            this::SM_Opcode_SEB_CLB, // cb
-            this::SM_Opcode_CPY, // cc
-            this::SM_Opcode_CMP, // cd
-            this::SM_Opcode_DEC, // ce
-            this::SM_Opcode_SEB_CLB, // cf
-            this::SM_Opcode_BNE, // d0
-            this::SM_Opcode_CMP, // d1
-            this::SM_Opcode_NotImplemented, // d2
-            this::SM_Opcode_BBC_BBS, // d3
-            this::SM_Opcode_NotImplemented, // d4
-            this::SM_Opcode_CMP, // d5
-            this::SM_Opcode_DEC, // d6
-            this::SM_Opcode_BBC_BBS, // d7
-            this::SM_Opcode_CLD, // d8
-            this::SM_Opcode_CMP, // d9
-            this::SM_Opcode_NotImplemented, // da
-            this::SM_Opcode_SEB_CLB, // db
-            this::SM_Opcode_NotImplemented, // dc
-            this::SM_Opcode_CMP, // dd
-            this::SM_Opcode_DEC, // de
-            this::SM_Opcode_SEB_CLB, // df
-            this::SM_Opcode_CPX, // e0
-            this::SM_Opcode_NotImplemented, // e1
-            this::SM_Opcode_NotImplemented, // e2
-            this::SM_Opcode_BBC_BBS, // e3
-            this::SM_Opcode_CPX, // e4
-            this::SM_Opcode_NotImplemented, // e5
-            this::SM_Opcode_INC, // e6
-            this::SM_Opcode_BBC_BBS, // e7
-            this::SM_Opcode_INX, // e8
-            this::SM_Opcode_NotImplemented, // e9
-            this::SM_Opcode_NOP, // ea
-            this::SM_Opcode_SEB_CLB, // eb
-            this::SM_Opcode_CPX, // ec
-            this::SM_Opcode_NotImplemented, // ed
-            this::SM_Opcode_INC, // ee
-            this::SM_Opcode_SEB_CLB, // ef
-            this::SM_Opcode_BEQ, // f0
-            this::SM_Opcode_NotImplemented, // f1
-            this::SM_Opcode_NotImplemented, // f2
-            this::SM_Opcode_BBC_BBS, // f3
-            this::SM_Opcode_NotImplemented, // f4
-            this::SM_Opcode_NotImplemented, // f5
-            this::SM_Opcode_INC, // f6
-            this::SM_Opcode_BBC_BBS, // f7
-            this::SM_Opcode_NotImplemented, // f8
-            this::SM_Opcode_NotImplemented, // f9
-            this::SM_Opcode_NotImplemented, // fa
-            this::SM_Opcode_SEB_CLB, // fb
-            this::SM_Opcode_NotImplemented, // fc
-            this::SM_Opcode_NotImplemented, // fd
-            this::SM_Opcode_INC, // fe
-            this::SM_Opcode_SEB_CLB // ff
-    ).toArray(Consumer[]::new);
 
     void SM_StartVector(int vector) {
         SM_PushStack((byte) ((this.pc & 0xffff) >>> 8));
@@ -1385,42 +1064,19 @@ class SubMcu {
         }
     }
 
-    // Diagnostic counters for UART
-    private long diagUartCalls = 0;
-    private long diagUartRxDisabled = 0;
-    private long diagUartNoData = 0;
-    private long diagUartGotByte = 0;
-    private long diagUartDelay = 0;
-    private long diagUartReceived = 0;
-    private long diagUartLastPrint = 0;
-
     void SM_UpdateUART() {
-        diagUartCalls++;
-
-        // Print diagnostic every 1 second (approximately every 5M calls at current rate)
-        if (diagUartCalls - diagUartLastPrint >= 1000000) {
-            System.err.printf("SM_UART: calls=%d rxDisabled=%d noData=%d gotByte=%d delay=%d received=%d UART1_CTRL=0x%02x%n",
-                    diagUartCalls, diagUartRxDisabled, diagUartNoData, diagUartGotByte, diagUartDelay, diagUartReceived,
-                    sm_device_mode[SM_DEV_UART1_CTRL.v] & 0xff);
-            diagUartLastPrint = diagUartCalls;
-        }
-
         if ((sm_device_mode[SM_DEV_UART1_CTRL.v] & 4) == 0) { // RX disabled
-            diagUartRxDisabled++;
             return;
         }
         if (mcu.uart_write_ptr.get() == mcu.uart_read_ptr.get()) { // no byte
-            diagUartNoData++;
             return;
         }
 
         if (uart_rx_gotbyte != 0) {
-            diagUartGotByte++;
             return;
         }
 
         if (this.cycles < uart_rx_delay) {
-            diagUartDelay++;
             return;
         }
 
@@ -1428,7 +1084,6 @@ class SubMcu {
         mcu.uart_read_ptr.set((mcu.uart_read_ptr.get() + 1) % Mcu.uart_buffer_size);
         uart_rx_gotbyte = 1;
         sm_device_mode[SM_DEV_INT_REQUEST.v] |= 0x40;
-        diagUartReceived++;
 
         uart_rx_delay = this.cycles + 3000 * 4;
     }

@@ -34,12 +34,10 @@
 
 package vavi.sound.sc55;
 
-import java.lang.System.Logger;
 import java.util.Arrays;
 
 import vavi.sound.sc55.Mcu.Dev;
 
-import static java.lang.System.getLogger;
 import static vavi.sound.sc55.McuInterrupt.Interrupt.INTERRUPT_SOURCE_FRT0_FOVI;
 import static vavi.sound.sc55.McuInterrupt.Interrupt.INTERRUPT_SOURCE_FRT0_OCIA;
 import static vavi.sound.sc55.McuInterrupt.Interrupt.INTERRUPT_SOURCE_FRT0_OCIB;
@@ -49,8 +47,6 @@ import static vavi.sound.sc55.McuInterrupt.Interrupt.INTERRUPT_SOURCE_TIMER_OVI;
 
 
 class McuTimer {
-
-    private static final Logger logger = getLogger(McuTimer.class.getName());
 
     static class frt_t {
 
@@ -252,7 +248,6 @@ class McuTimer {
 
     void TIMER_Clock(long cycles) {
         int i;
-//if (mcu.CC >= 57519) { System.err.printf("timer_cycles: %d, cycles: %d%n", timer_cycles, cycles); }
         while (timer_cycles * 2 < cycles) { // FIXME
             for (i = 0; i < 3; i++) {
                 frt_t timer = frt[i];
@@ -302,7 +297,6 @@ class McuTimer {
                     timer.tcsr |= 0x40;
                 if ((timer.tcr & 0x10) != 0 && (timer.tcsr & 0x10) != 0)
                     mcu.interrupt.MCU_Interrupt_SetRequest(INTERRUPT_SOURCE_FRT0_FOVI.ordinal() + i * 4, true);
-//if (mcu.CC > 57519 && mcu.CC < 57583) { System.err.printf("timer_cycles: %d, cycles: %d, t:%d, tcr: %02x, tcsr: %02x%n", timer_cycles, cycles, i, timer.tcr, timer.tcsr); }
                 if ((timer.tcr & 0x20) != 0 && (timer.tcsr & 0x20) != 0) {
                     mcu.interrupt.MCU_Interrupt_SetRequest(INTERRUPT_SOURCE_FRT0_OCIA.ordinal() + i * 4, true);
                 }

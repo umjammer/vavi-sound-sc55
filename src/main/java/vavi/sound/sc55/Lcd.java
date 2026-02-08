@@ -93,8 +93,6 @@ class Lcd {
     }
 
     void LCD_Write(int address, byte data) {
-//System.err.printf("%10d: %02x %02x%n", mcu.CC, address, data);
-//if (mcu.CC++ > 6000) { System.exit(1); }
         if (address == 0) {
             if ((data & 0xe0) == 0x20) {
                 LCD_DL = (data & 0x10) != 0;
@@ -139,7 +137,6 @@ class Lcd {
                     } else {
                         if ((LCD_DD_RAM & 0x3f) < 40) {
                             LCD_Data[LCD_DD_RAM & 0x3f] = data;
-//if (LCD_DD_RAM == 0 && data == 0x31) { new Exception("LCD_Write").printStackTrace(); }
                         }
                     }
                 } else {
@@ -154,11 +151,6 @@ class Lcd {
                 LCD_DD_RAM &= 0x7f;
             }
         }
-//        logger.log(Level.TRACE, "%d %2x ".formatted(address, data));
-//        if (data >= 0x20 && data <= 'z')
-//            logger.log(Level.TRACE, "%c".formatted(data));
-//        else
-//            logger.log(Level.TRACE, "");
     }
 
     int lcd_width = 741;
@@ -250,7 +242,7 @@ class Lcd {
 
         try {
             byte[] raw = Lcd.class.getResourceAsStream(m_back_path).readAllBytes();
-logger.log(Level.DEBUG, "%d x %d x %d = %d, %d".formatted(lcd_background[0].length, lcd_background.length, Integer.BYTES, lcd_background[0].length * lcd_background.length * Integer.BYTES, raw.length));
+logger.log(Level.TRACE, "%d x %d x %d = %d, %d".formatted(lcd_background[0].length, lcd_background.length, Integer.BYTES, lcd_background[0].length * lcd_background.length * Integer.BYTES, raw.length));
             int p = 0;
             ByteBuffer bb = ByteBuffer.allocate(lcd_background[0].length * Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN);
             for (var b : lcd_background) {

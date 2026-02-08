@@ -34,18 +34,14 @@
 
 package vavi.sound.sc55;
 
-import java.lang.System.Logger;
+import java.util.Arrays;
 import jdk.incubator.vector.IntVector;
-import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
 
-import static java.lang.System.getLogger;
 import static vavi.sound.sc55.McuInterrupt.Interrupt.INTERRUPT_SOURCE_IRQ0;
 
 
 class Pcm {
-
-    private static final Logger logger = getLogger(Pcm.class.getName());
 
 //    static class pcm_t {
 
@@ -80,8 +76,6 @@ class Pcm {
         int[] rcsum = new int[2];
 
         // Diagnostic counters
-        long pcmUpdateCalls = 0;
-        long pcmUpdateWork = 0;  // Times the while loop ran
         long diagActiveVoices = 0;    // Sum of active voices per sample
 
         // Voice mask tracking (for diagnostic output)
@@ -90,7 +84,6 @@ class Pcm {
         long diagEarlyExits = 0;      // Times early-exit was taken
         long diagFullProcess = 0;     // Times full voice processing ran
         long diagSamples = 0;         // Samples per diagnostic period (reset)
-        long diagLastReport = 0;      // Last report time
 
         // Envelope state diagnostics
         long diagEnvNotFrozen = 0;    // Times envelope was NOT frozen when checked
@@ -107,77 +100,12 @@ class Pcm {
         long diagRomReadsSkipped = 0;  // Number of voices where ROM reads were skipped
         long diagRomReadsPerformed = 0;  // Number of voices where ROM reads were done
 
-        // Profiling counters (nanoseconds)
-        private long profCalcTvTime = 0;      // Time in calc_tv calls
-        private long profRomReadTime = 0;     // Time in PCM_ReadROM calls
-        private long profVoiceLoopTime = 0;   // Time in voice loop (total)
-        private long profSampleCount = 0;     // Number of samples for profiling period
-
         // === SoA ARRAYS FOR TWO-PHASE VOICE PROCESSING ===
         // Phase 1 stores Stage 3 outputs here, Phase 2 uses them for vectorized processing
-
-        // Stage 3 outputs: ROM sample data (4 samples per voice for interpolation)
-        private final int[] soaSamp0 = new int[32];
-        private final int[] soaSamp1 = new int[32];
-        private final int[] soaSamp2 = new int[32];
-        private final int[] soaSamp3 = new int[32];
-        private final int[] soaNewNibble = new int[32];
-
-        // Stage 3 state: flags and intermediate values needed for Stages 4-8
-        private final boolean[] soaActive = new boolean[32];
-        private final boolean[] soaKon = new boolean[32];
-        private final int[] soaSubPhaseOf = new int[32];
-        private final int[] soaInterpRatio = new int[32];
-        private final int[] soaOldNibble = new int[32];
-        private final boolean[] soaNibbleCmp2 = new boolean[32];
-        private final boolean[] soaNibbleCmp3 = new boolean[32];
-        private final boolean[] soaNibbleCmp4 = new boolean[32];
-        private final boolean[] soaNibbleCmp5 = new boolean[32];
-
-        // Stage 6 input: filter coefficient
-        private final int[] soaFilter = new int[32];
-
-        // Stage 8 inputs: pan and reverb/chorus
-        private final int[] soaPan = new int[32];
-        private final int[] soaRc = new int[32];
-
-        // Phase 2 intermediate results
-        private final int[] soaReference = new int[32];  // DPCM reference level
-        private final int[] soaTest = new int[32];       // Interpolation result
-        private final int[] soaV3 = new int[32];         // Filter output
-        private final int[] soaSample3 = new int[32];    // After envelope
-        private final int[] soaSamplL = new int[32];     // Left channel contribution
-        private final int[] soaSamplR = new int[32];     // Right channel contribution
-
-        // Additional SoA arrays for two-phase processing
-        private final int[] soaKey = new int[32];
-        private final boolean[] soaUsenew = new boolean[32];
-        private final boolean[] soaIrqFlag = new boolean[32];
-        private final int[] soaNextAddress = new int[32];
-        private final boolean[] soaNextB15 = new boolean[32];
-        // Filter state from ram1
-        private final int[] soaReg1 = new int[32];
-        private final int[] soaReg3 = new int[32];
-        private final int[] soaReg2_6 = new int[32];
-        // Additional state for Phase 2
-        private final int[] soaB7 = new int[32];  // b7 flag as int for vectorization
-        private final int[] soaHiaddr = new int[32];
-        private final int[] soaWaveAddrBase = new int[32];
-        // Active voice mask for current sample
-        private int activeVoiceMask = 0;
-        // Count of active voices for Phase 2
-        private int activeVoiceCount = 0;
-        // Indices of active voices (for Phase 2 iteration)
-        private final int[] activeVoiceIndices = new int[32];
 
         // Enable two-phase SoA processing (4x faster than original loop)
         // Set -Dsc55.useSoA=false to disable
         private static final boolean USE_SOA_PROCESSING = !Boolean.getBoolean("sc55.noSoA");
-
-        // Max voices that do ROM reads per sample (rest skip ROM reads to save CPU)
-        // Configurable via -Dsc55.maxRomVoices=N (default 4)
-        // With 4, MCU should stay near 2M/s even with many active voices
-        private static final int MAX_ROM_READ_VOICES = Integer.getInteger("sc55.maxRomVoices", 4);
 
         // Voice timing counter - NEVER reset, used for voice allocation/release timing
         long totalSamples = 0;
@@ -190,8 +118,6 @@ class Pcm {
         // Voice age tracking: timestamp of last key-on for each voice
         // When a voice has been active too long without new key-on, force deallocate
         private final long[] voiceLastKeyOn = new long[32];
-        // Threshold: ~1.5 seconds at 66207 Hz = ~100000 samples
-        private static final long VOICE_AGE_THRESHOLD = 100000;
 
         // Keep frozen counter as backup mechanism for truly stuck voices
         // With the IRQ queue fix, this should rarely be needed
@@ -200,10 +126,8 @@ class Pcm {
         // Per plan file: this value worked to keep voices balanced
         private static final long FROZEN_VOICE_THRESHOLD = 3300;
 
-
-
-    // Cached fast-path flag for ROM reads (set once at init)
-    private boolean useFastRomRead = false;
+        // Cached fast-path flag for ROM reads (set once at init)
+        private boolean useFastRomRead = false;
 
         // Pre-allocated scratch arrays to avoid GC pressure in hot PCM_Update loop
         private final int[] scratch_tt = new int[2];
@@ -217,15 +141,7 @@ class Pcm {
         private static final VectorSpecies<Integer> SPECIES = IntVector.SPECIES_256;
         private static final int VECTOR_LENGTH = SPECIES.length();  // 8
 
-        // Flat arrays for vectorized envelope processing (32 voices)
-        // Structure-of-Arrays layout enables SIMD operations
-        private final int[] vecEnvLevel = new int[32];      // ram2[slot][9] & 0x7fff
-        private final int[] vecEnvResult = new int[32];     // Result after decay
-        private final int[] vecVoiceMix_L = new int[32];    // Left channel contribution
-        private final int[] vecVoiceMix_R = new int[32];    // Right channel contribution
-
         // Decay constant vector (all lanes = 100)
-        private static final IntVector DECAY_AMOUNT = IntVector.broadcast(SPECIES, 100);
         private static final IntVector ZERO_VECTOR = IntVector.zero(SPECIES);
 
         // Pre-computed addlow values for calc_tv optimization
@@ -240,30 +156,14 @@ class Pcm {
 
         // Envelope levels (ram2[slot][9], ram2[slot][10], ram2[slot][11])
         private final int[] soaEnvLevel0 = new int[32];  // Main envelope
-        private final int[] soaEnvLevel1 = new int[32];  // Secondary envelope
-        private final int[] soaEnvLevel2 = new int[32];  // Filter envelope
-
-        // Envelope control registers (ram2[slot][3], ram2[slot][4], ram2[slot][5])
-        private final int[] soaEnvCtrl0 = new int[32];
-        private final int[] soaEnvCtrl1 = new int[32];
-        private final int[] soaEnvCtrl2 = new int[32];
 
         // Voice active flags (1 = active, 0 = inactive)
         private final int[] soaVoiceActive = new int[32];
 
         // Volume output from calc_tv (for vectorized processing)
         private final int[] soaVolmul0 = new int[32];
-        private final int[] soaVolmul1 = new int[32];
 
-        // ROM read addresses (pre-computed for vectorized gather)
-        private final int[] soaRomAddr = new int[32];
-        private final int[] soaRomBank = new int[32];
-
-        // Sample outputs for vectorized mixing
-        private final int[] soaSampleL = new int[32];
-        private final int[] soaSampleR = new int[32];
-
-        // ============== TWO-PHASE SoA PROCESSING ARRAYS ==============
+        // ---- TWO-PHASE SoA PROCESSING ARRAYS ----
         // Phase 1 outputs (address generator + ROM reads)
         private final int[] p1Samp0 = new int[32];
         private final int[] p1Samp1 = new int[32];
@@ -371,15 +271,6 @@ class Pcm {
         return 0;
     }
 
-    // Diagnostic: track voice mask writes
-    private long diagVoiceMaskWrites = 0;
-    private long diagVoiceMaskLastPrint = 0;
-
-    // Diagnostic: track IRQ firing
-    private long diagIrqFired = 0;
-    private long diagIrqLastPrint = 0;
-    private long diagIrqAcked = 0;
-
     void PCM_Write(int address, byte data) {
         address &= 0x3f;
         if (address < 0x4) { // voice enable
@@ -411,13 +302,7 @@ class Pcm {
             }
             if (clearBits != 0) voiceMaskClearCount += Integer.bitCount(clearBits);
             this.voice_mask_updating = 1;
-
-            // Diagnostic: log voice mask writes (commented out for normal operation)
-            diagVoiceMaskWrites++;
-            // System.err.printf("PCM_VOICE_MASK: #%d addr=%d data=0x%02x old=0x%08x new=0x%08x%n",
-            //         diagVoiceMaskWrites, address, data & 0xff, oldMask, newMask);
-        } else if (address >= 0x20 && address < 0x24) // wave rom
-        {
+        } else if (address >= 0x20 && address < 0x24) { // wave rom
             switch (address & 3) {
                 case 1:
                     this.wave_read_address &= ~0xff0000;
@@ -483,14 +368,6 @@ class Pcm {
                     ix |= 8;
 
                 this.ram2[this.select_channel][ix] = (short) this.write_latch;
-
-                    // Diagnostic: trace envelope control writes (commented out for normal operation)
-                // if (ix >= 3 && ix <= 5 && this.select_channel < 28) {
-                //     int speed = this.write_latch & 0xff;
-                //     int target = (this.write_latch >> 8) & 0xff;
-                //     System.err.printf("PCM_ENV: ch=%d ix=%d speed=0x%02x target=0x%02x (raw=0x%04x)%n",
-                //             this.select_channel, ix, speed, target, this.write_latch & 0xffff);
-                // }
             }
         }
     }
@@ -499,7 +376,6 @@ class Pcm {
     // ch: [31][2], [31][5]
     byte PCM_Read(int address) {
         address &= 0x3f;
-//        logger.log(Level.DEBUG, "PCM Read: %2x, read_latch: %x".formatted(address, read_latch));
 
         if (address < 0x4) {
             if (this.voice_mask_updating != 0)
@@ -508,7 +384,6 @@ class Pcm {
         } else if (address == 0x3c || address == 0x3e) { // status
             byte status = 0;
             if (address == 0x3e && this.irq_assert != 0) {
-                diagIrqAcked++;
                 this.irq_assert = 0;
                 if (mcu.mcu_jv880)
                     mcu.MCU_GA_SetGAInt(5, false);
@@ -528,7 +403,6 @@ class Pcm {
                         // Fire the IRQ
                         this.irq_assert = 1;
                         this.irq_channel = nextSlot;
-                        diagIrqFired++;
                         if (mcu.mcu_jv880)
                             mcu.MCU_GA_SetGAInt(5, true);
                         else
@@ -580,11 +454,11 @@ class Pcm {
 
     void PCM_Reset() {
         for (int i = 0; i < 32; i++) {
-            java.util.Arrays.fill(this.ram1[i], 0);
-            java.util.Arrays.fill(this.ram2[i], (short) 0);
+            Arrays.fill(this.ram1[i], 0);
+            Arrays.fill(this.ram2[i], (short) 0);
         }
-        java.util.Arrays.fill(this.eram, (short) 0);
-        java.util.Arrays.fill(this.rcsum, 0);
+        Arrays.fill(this.eram, (short) 0);
+        Arrays.fill(this.rcsum, 0);
 
         // Clear Primitives
         this.select_channel = 0;
@@ -666,6 +540,7 @@ class Pcm {
 
     // Pre-shifted interpolation LUT (shifted left by 6) to eliminate shift in hot loop
     private static final int[][] interp_lut_shifted;
+
     static {
         interp_lut_shifted = new int[3][128];
         for (int i = 0; i < 3; i++) {
@@ -673,73 +548,6 @@ class Pcm {
                 interp_lut_shifted[i][j] = interp_lut[i][j] << 6;
             }
         }
-    }
-
-    /**
-     * Vectorized envelope decay for ultra-fast-path voices.
-     * Processes up to 8 voices at once using SIMD instructions.
-     * Returns bitmask of voices that were processed (should skip in main loop).
-     */
-    private int processUltraFastPathVoices_Vectorized(int voice_active, int reg_slots) {
-        int processedMask = 0;
-        int romReadVoiceCount = 0;
-
-        // First pass: identify which voices need ultra-fast-path and gather their envelope levels
-        int ultraFastCount = 0;
-        int[] ultraFastSlots = new int[32];  // Slots that need ultra-fast-path
-
-        for (int slot = 0; slot < reg_slots; slot++) {
-            short[] ram2 = this.ram2[slot];
-            boolean okey = (ram2[7] & 0x20) != 0;
-            int key = (voice_active >> slot) & 1;
-            boolean kon = key != 0 && !okey;
-
-            if (key == 0) continue;  // Inactive voice
-
-            // Check if this voice should use ultra-fast-path
-            boolean skipForVoiceLimit = (romReadVoiceCount >= MAX_ROM_READ_VOICES);
-            long voiceAge = totalSamples - voiceLastKeyOn[slot];
-            boolean inAttackPhase = (voiceLastKeyOn[slot] == 0) || (voiceAge < 1320);
-
-            if (skipForVoiceLimit && !kon && !inAttackPhase) {
-                // This voice uses ultra-fast-path
-                ultraFastSlots[ultraFastCount] = slot;
-                vecEnvLevel[ultraFastCount] = ram2[9] & 0x7fff;
-                ultraFastCount++;
-                processedMask |= (1 << slot);
-            } else if (!kon || inAttackPhase) {
-                // Full processing voice - counts toward limit
-                romReadVoiceCount++;
-            }
-        }
-
-        if (ultraFastCount == 0) return 0;
-
-        // Second pass: vectorized envelope decay using SIMD
-        // Process 8 voices at a time
-        int i = 0;
-        for (; i + VECTOR_LENGTH <= ultraFastCount; i += VECTOR_LENGTH) {
-            // Load envelope levels into vector
-            IntVector env = IntVector.fromArray(SPECIES, vecEnvLevel, i);
-            // Subtract decay amount, clamp to zero
-            IntVector decayed = env.sub(DECAY_AMOUNT).max(ZERO_VECTOR);
-            // Store results
-            decayed.intoArray(vecEnvResult, i);
-        }
-        // Handle remaining voices (less than 8)
-        for (; i < ultraFastCount; i++) {
-            int env = vecEnvLevel[i];
-            vecEnvResult[i] = Math.max(0, env - 100);
-        }
-
-        // Third pass: write back decayed envelopes
-        for (i = 0; i < ultraFastCount; i++) {
-            int slot = ultraFastSlots[i];
-            this.ram2[slot][9] = (short) vecEnvResult[i];
-        }
-
-        diagRomReadsSkipped += ultraFastCount;
-        return processedMask;
     }
 
     private void calc_tv(int e, int adjust, short[] levelcur, int lp, boolean active, int[] volmul) {
@@ -843,107 +651,7 @@ class Pcm {
         }
     }
 
-    /**
-     * Vectorized batch calc_tv for envelope 0 (e=0).
-     * Processes 8 voices at once using SIMD.
-     *
-     * @param startSlot Starting slot index (must be multiple of 8)
-     * @param endSlot Ending slot index (exclusive)
-     * @param voice_active Bitmask of active voices
-     */
-    /**
-     * Batch envelope 0 calculation for 8 voices at a time using SIMD.
-     * This replaces individual calc_tv(0, ...) calls in the voice loop.
-     *
-     * NOTE: This is a simplified version that only handles the common case
-     * (type & 8 == 0). Voices needing the other path must be handled separately.
-     *
-     * Returns bitmask of slots that were successfully processed.
-     */
-    private int calc_tv_batch_env0(int startSlot, int endSlot, int voice_active) {
-        // Pre-computed addlow for type4 (most common for envelope)
-        int addlow = precompAddlow[0];
-        int processedMask = 0;
-
-        // Process 8 voices at a time
-        for (int base = startSlot; base + VECTOR_LENGTH <= endSlot; base += VECTOR_LENGTH) {
-            // Gather data from ram2 for 8 voices into contiguous arrays
-            for (int i = 0; i < VECTOR_LENGTH; i++) {
-                int slot = base + i;
-                short[] r2 = this.ram2[slot];
-                int adjust = r2[3] & 0xffff;
-                soaEnvCtrl0[base + i] = adjust;
-                soaEnvLevel0[base + i] = r2[9] & 0x7fff;
-                soaVoiceActive[base + i] = ((voice_active >> slot) & 1) != 0 && (r2[7] & 0x20) != 0 ? 1 : 0;
-            }
-
-            // Load vectors from offset 'base' in SoA arrays
-            IntVector adjustVec = IntVector.fromArray(SPECIES, soaEnvCtrl0, base);
-            IntVector levelVec = IntVector.fromArray(SPECIES, soaEnvLevel0, base);
-            IntVector activeVec = IntVector.fromArray(SPECIES, soaVoiceActive, base);
-
-            // Extract speed and target
-            IntVector speedVec = adjustVec.and(0xff);
-            IntVector targetVec = adjustVec.lanewise(VectorOperators.LSHR, 8).and(0xff);
-
-            // Compute type bits (simplified - assume type & 8 == 0 path)
-            // This is the common case for envelope processing
-            // Voices needing type & 8 != 0 path are handled in fallback
-
-            // shift = (10 - (speed & 15)) & 15
-            IntVector shiftVec = IntVector.broadcast(SPECIES, 10)
-                .sub(speedVec.and(15)).and(15);
-
-            // sum1 = (target << 11) - (level << 4)
-            IntVector targetShifted = targetVec.lanewise(VectorOperators.LSHL, 11);
-            IntVector levelShifted = levelVec.lanewise(VectorOperators.LSHL, 4);
-            IntVector sum1 = targetShifted.sub(levelShifted);
-
-            // shifted = sum1 >> shift (per-lane variable shift not directly supported)
-            // Fallback: extract to array, process, reload
-            shiftVec.intoArray(soaEnvCtrl1, base);  // Reuse array for temp storage
-            sum1.intoArray(soaEnvLevel1, base);
-            for (int i = 0; i < VECTOR_LENGTH; i++) {
-                int shift = soaEnvCtrl1[base + i];
-                int s1 = soaEnvLevel1[base + i];
-                soaEnvLevel2[base + i] = (s1 >> shift) - s1;
-            }
-            IntVector shifted = IntVector.fromArray(SPECIES, soaEnvLevel2, base);
-
-            // sum2 = (target << 11) + addlow + shifted
-            IntVector addlowVec = IntVector.broadcast(SPECIES, addlow);
-            IntVector sum2 = targetShifted.add(addlowVec).add(shifted);
-
-            // volmul = (sum2 >> 4) & 0x7ffe
-            IntVector volmulVec = sum2.lanewise(VectorOperators.ASHR, 4).and(0x7ffe);
-
-            // Store volmul results at offset 'base'
-            volmulVec.intoArray(soaVolmul0, base);
-
-            // Update envelope levels (if nfs != 0)
-            if (this.nfs != 0) {
-                IntVector newLevel = sum2.lanewise(VectorOperators.ASHR, 4).and(0x7fff);
-                newLevel.intoArray(soaEnvLevel0, base);
-
-                // Scatter back to ram2
-                for (int i = 0; i < VECTOR_LENGTH; i++) {
-                    int slot = base + i;
-                    this.ram2[slot][9] = (short) soaEnvLevel0[base + i];
-                }
-            }
-
-            // Mark these slots as processed
-            for (int i = 0; i < VECTOR_LENGTH; i++) {
-                if (soaVoiceActive[base + i] != 0) {
-                    processedMask |= (1 << (base + i));
-                }
-            }
-        }
-
-        return processedMask;
-    }
-
-    private final int eram_unpack(int addr, int type /* = 0 */) {
+    private int eram_unpack(int addr, int type /* = 0 */) {
         addr &= 0x3fff;
         int data = this.eram[addr] & 0xffff;
         int val = data & 0x3fff;
@@ -953,7 +661,7 @@ class Pcm {
         return val >> (18 - sh * 2 + type);
     }
 
-    private final void eram_pack(int addr, int val) {
+    private void eram_pack(int addr, int val) {
         addr &= 0x3fff;
         int sh = 0;
         int top = (val >> 13) & 0x7f;
@@ -1432,6 +1140,7 @@ class Pcm {
                 ram2_[8] = 0; ram2_[9] = 0; ram2_[10] = 0;
             }
         }
+
         // Note: accum_l/r are already set correctly by the last slot processing
         // (either in the inactive slot handling at line 1248-1251, or in the
         // active slot handling at line 1418-1421). Do NOT overwrite here.
@@ -2108,695 +1817,694 @@ class Pcm {
             if (USE_SOA_PROCESSING) {
                 processVoicesTwoPhase(reg_slots, voice_active, frozenProcessedMask, rcadd, rcadd2);
             } else
-            for (int slot = 0; slot < reg_slots; slot++) {
-                int[] ram1 = this.ram1[slot];
-                short[] ram2 = this.ram2[slot];
-                boolean okey = (ram2[7] & 0x20) != 0;
-                int key = (voice_active >> slot) & 1;
+                    for (int slot = 0; slot < reg_slots; slot++) {
+                    int[] ram1 = this.ram1[slot];
+                    short[] ram2 = this.ram2[slot];
+                    boolean okey = (ram2[7] & 0x20) != 0;
+                    int key = (voice_active >> slot) & 1;
 
-                boolean active = okey && key != 0;
-                boolean kon = key != 0 && !okey;
+                    boolean active = okey && key != 0;
+                    boolean kon = key != 0 && !okey;
 
-                // === VOICE AGE-BASED DEALLOCATION ===
-                // Track when each voice last had key-on. If voice active too long
-                // without new key-on, it's stuck - force deallocate.
-                // IMPORTANT: This must run for ALL voices including vectorized ones!
+                    // === VOICE AGE-BASED DEALLOCATION ===
+                    // Track when each voice last had key-on. If voice active too long
+                    // without new key-on, it's stuck - force deallocate.
+                    // IMPORTANT: This must run for ALL voices including vectorized ones!
 
-                if (kon) {
-                    // Key-on: record timestamp for this voice
-                    voiceLastKeyOn[slot] = totalSamples;
-                    voiceFrozenCounter[slot] = 0;
-                }
+                    if (kon) {
+                        // Key-on: record timestamp for this voice
+                        voiceLastKeyOn[slot] = totalSamples;
+                        voiceFrozenCounter[slot] = 0;
+                    }
 
-                if (key != 0 && !kon) {
-                    // Voice is active but not in key-on phase
-                    long voiceAge = totalSamples - voiceLastKeyOn[slot];
+                    if (key != 0 && !kon) {
+                        // Voice is active but not in key-on phase
+                        long voiceAge = totalSamples - voiceLastKeyOn[slot];
 
-                    // Check envelope state for deallocation
-                    int envCtrl = ram2[3] & 0xffff;
-                    int envSpeed = envCtrl & 0xff;
-                    int envTarget = (envCtrl >> 8) & 0xff;
-                    int envLevel = ram2[9] & 0x7fff;  // Current envelope level (0-32767)
-                    boolean envFrozen = (envSpeed == 0 && envTarget > 128);
-                    // Aggressive silent threshold: 3000 out of 32767 (~9% of max level)
-                    boolean envSilent = (envLevel < 3000);
+                        // Check envelope state for deallocation
+                        int envCtrl = ram2[3] & 0xffff;
+                        int envSpeed = envCtrl & 0xff;
+                        int envTarget = (envCtrl >> 8) & 0xff;
+                        int envLevel = ram2[9] & 0x7fff;  // Current envelope level (0-32767)
+                        boolean envFrozen = (envSpeed == 0 && envTarget > 128);
+                        // Aggressive silent threshold: 3000 out of 32767 (~9% of max level)
+                        boolean envSilent = (envLevel < 3000);
 
-                    boolean shouldDeallocate = false;
+                        boolean shouldDeallocate = false;
 
-                    // Frozen envelope: speed=0 and high target indicates release phase
-                    // ROM sets this after Note Off, expecting voice to be held then released.
-                    // In C++ this works correctly, but Java timing differs.
-                    // FIX: Force the envelope to actually decay by modifying ram2[9] directly.
-                    // This mimics what would happen if the ROM's release logic was working.
-                    // Skip if already processed by vectorized batch
-                    boolean alreadyProcessed = (frozenProcessedMask & (1 << slot)) != 0;
-                    if (envFrozen && voiceAge > 1000 && !alreadyProcessed) {
-                        diagEnvFrozen++;
-                        // Force envelope decay: ~20 units per sample = ~100ms full decay
-                        if (envLevel > 20) {
-                            ram2[9] = (short)(envLevel - 20);
+                        // Frozen envelope: speed=0 and high target indicates release phase
+                        // ROM sets this after Note Off, expecting voice to be held then released.
+                        // In C++ this works correctly, but Java timing differs.
+                        // FIX: Force the envelope to actually decay by modifying ram2[9] directly.
+                        // This mimics what would happen if the ROM's release logic was working.
+                        // Skip if already processed by vectorized batch
+                        boolean alreadyProcessed = (frozenProcessedMask & (1 << slot)) != 0;
+                        if (envFrozen && voiceAge > 1000 && !alreadyProcessed) {
+                            diagEnvFrozen++;
+                            // Force envelope decay: ~20 units per sample = ~100ms full decay
+                            if (envLevel > 20) {
+                                ram2[9] = (short)(envLevel - 20);
+                            } else {
+                                ram2[9] = 0;
+                            }
+                            voiceFrozenCounter[slot]++;
+                            if (voiceFrozenCounter[slot] > FROZEN_VOICE_THRESHOLD) {
+                                shouldDeallocate = true;
+                            }
+                        } else if (alreadyProcessed) {
+                            // Already processed by vectorized batch
+                            voiceFrozenCounter[slot]++;
+                            if (voiceFrozenCounter[slot] > FROZEN_VOICE_THRESHOLD) {
+                                shouldDeallocate = true;
+                            }
+                        } else if (envFrozen) {
+                            // Still in early frozen phase - count but don't decay yet
+                            diagEnvFrozen++;
+                            voiceFrozenCounter[slot]++;
                         } else {
-                            ram2[9] = 0;
+                            diagEnvNotFrozen++;
+                            if (envSpeed == 0) {
+                                diagEnvSpeedZeroLowTarget++;
+                            } else {
+                                diagEnvSpeedNonZero++;
+                            }
+                            voiceFrozenCounter[slot] = 0;
                         }
-                        voiceFrozenCounter[slot]++;
-                        if (voiceFrozenCounter[slot] > FROZEN_VOICE_THRESHOLD) {
+
+                        // Silent voices can be deallocated (after brief minimum age)
+                        if (envSilent && voiceAge > 1000) {
+                            diagEnvSilent++;
                             shouldDeallocate = true;
                         }
-                    } else if (alreadyProcessed) {
-                        // Already processed by vectorized batch
-                        voiceFrozenCounter[slot]++;
-                        if (voiceFrozenCounter[slot] > FROZEN_VOICE_THRESHOLD) {
-                            shouldDeallocate = true;
+
+                        if (shouldDeallocate) {
+                            // Force release this voice
+                            int slotBit = 1 << slot;
+                            this.voice_mask_pending &= ~slotBit;
+                            this.voice_mask &= ~slotBit;
+                            voiceMaskClearCount++;
+                            voiceFrozenCounter[slot] = 0;
+                            voiceLastKeyOn[slot] = 0;
+                            key = 0;
+                            active = false;
+                            kon = false;
                         }
-                    } else if (envFrozen) {
-                        // Still in early frozen phase - count but don't decay yet
-                        diagEnvFrozen++;
-                        voiceFrozenCounter[slot]++;
+                    }
+
+                    // Skip voices already processed by vectorized path (after deallocation check)
+                    if ((vectorProcessedMask & (1 << slot)) != 0) {
+                        // Still need slot2 mixing for reverb/chorus
+                        int slot2 = (slot == reg_slots - 1) ? 31 : slot + 1;
+                        switch (slot2) {
+                            case 17: this.ram1[31][1] = addclip20(this.ram1[31][1], rcadd[0] >> 1, rcadd[0] & 1); break;
+                            case 18: this.ram1[31][3] = addclip20(this.ram1[31][3], rcadd[1] >> 1, rcadd[1] & 1); break;
+                            case 21: this.ram1[31][1] = addclip20(this.ram1[31][1], rcadd[2] >> 1, rcadd[2] & 1); break;
+                            case 22: this.ram1[31][3] = addclip20(this.ram1[31][3], rcadd[3] >> 1, rcadd[3] & 1); break;
+                            case 23: this.ram1[31][1] = addclip20(this.ram1[31][1], rcadd[4] >> 1, rcadd[4] & 1); break;
+                            case 31: this.ram1[31][3] = addclip20(this.ram1[31][3], rcadd[5] >> 1, rcadd[5] & 1); break;
+                        }
+                        if (slot == reg_slots - 1) {
+                            this.accum_l = this.ram1[31][1];
+                            this.accum_r = this.ram1[31][3];
+                        }
+                        continue;
+                    }
+
+                    // Early exit for truly idle voices (key=0)
+                    if (key == 0) {
+                        diagEarlyExits++;
+                        // Still need slot2 mixing for reverb/chorus
+                        int slot2 = (slot == reg_slots - 1) ? 31 : slot + 1;
+                        switch (slot2) {
+                            case 17:
+                                this.ram1[31][1] = addclip20(this.ram1[31][1], rcadd[0] >> 1, rcadd[0] & 1);
+                                this.rcsum[1] = addclip20(this.rcsum[1], rcadd2[0] >> 1, rcadd2[0] & 1);
+                                break;
+                            case 18:
+                                this.ram1[31][3] = addclip20(this.ram1[31][3], rcadd[1] >> 1, rcadd[1] & 1);
+                                this.rcsum[1] = addclip20(this.rcsum[1], rcadd2[1] >> 1, rcadd2[1] & 1);
+                                break;
+                            case 21:
+                                this.ram1[31][1] = addclip20(this.ram1[31][1], rcadd[2] >> 1, rcadd[2] & 1);
+                                this.rcsum[0] = addclip20(this.rcsum[0], rcadd2[2] >> 1, rcadd2[2] & 1);
+                                break;
+                            case 22:
+                                this.ram1[31][3] = addclip20(this.ram1[31][3], rcadd[3] >> 1, rcadd[3] & 1);
+                                this.rcsum[1] = addclip20(this.rcsum[1], rcadd2[3] >> 1, rcadd2[3] & 1);
+                                break;
+                            case 23:
+                                this.ram1[31][1] = addclip20(this.ram1[31][1], rcadd[4] >> 1, rcadd[4] & 1);
+                                this.rcsum[0] = addclip20(this.rcsum[0], rcadd2[4] >> 1, rcadd2[4] & 1);
+                                break;
+                            case 31:
+                                this.ram1[31][3] = addclip20(this.ram1[31][3], rcadd[5] >> 1, rcadd[5] & 1);
+                                this.rcsum[1] = addclip20(this.rcsum[1], rcadd2[5] >> 1, rcadd2[5] & 1);
+                                break;
+                        }
+                        // For last slot, set output accumulators
+                        if (slot == reg_slots - 1) {
+                            this.accum_l = this.ram1[31][1];
+                            this.accum_r = this.ram1[31][3];
+                        }
+                        // Clear ALL voice state (including ram2[11] filter state)
+                        if (this.nfs != 0) {
+                            ram1[1] = 0;
+                            ram1[3] = 0;
+                            ram1[5] = 0;
+                        }
+                        ram2[8] = 0;
+                        ram2[9] = 0;
+                        ram2[10] = 0;
+                        ram2[11] = 0;  // Also clear filter state
+                        continue;
+                    }
+
+                    // Full voice processing (key != 0)
+                    diagFullProcess++;
+
+                    // Ultra-fast-path voices are now handled by vectorized processing above
+                    // Here we only handle skipForEnvelope (nearly silent voices)
+                    int currentEnvLevel = ram2[9] & 0x7fff;
+                    boolean skipForEnvelope = (currentEnvLevel < 200) && !kon;
+                    boolean skipRomReads = skipForEnvelope;
+                    if (skipRomReads) {
+                        diagRomReadsSkipped++;
                     } else {
-                        diagEnvNotFrozen++;
-                        if (envSpeed == 0) {
-                            diagEnvSpeedZeroLowTarget++;
+                        diagRomReadsPerformed++;
+                        romReadVoiceCount++;  // Count this voice as having done ROM reads
+                    }
+
+                    // address generator
+
+                    boolean b15 = (ram2[8] & 0x8000) != 0; // 0
+                    boolean b6 = (ram2[7] & 0x40) != 0; // 1
+                    boolean b7 = (ram2[7] & 0x80) != 0; // 1
+                    int hiaddr = ((ram2[7] & 0xffff) >> 8) & 15; // 1
+                    int old_nibble = ((ram2[7] & 0xffff) >> 12) & 15; // 1
+                    // Pre-compute ROM address base once per voice (optimization)
+                    int waveAddrBase = hiaddr << 20;
+
+                    int address = ram1[4]; // 0
+                    int address_end = ram1[0]; // 1 or 2
+                    int address_loop = ram1[2]; // 2 or 1
+
+                    int cmp1 = b15 ? address_loop : address_end;
+                    int cmp2 = address;
+                    boolean nibble_cmp1 = (cmp1 & 0xf_fff0) == (cmp2 & 0xf_fff0); // 2
+                    boolean irq_flag = false;
+
+                    // fixme:
+                    if (kon)
+                        irq_flag = ((cmp1 + address_loop) & 0x10_0000) != 0;
+                    else
+                        irq_flag = ((address + ((-address_loop) & 0xf_ffff)) & 0x10_0000) != 0;
+                    irq_flag ^= b7;
+
+                    int nibble_address = (!b6 && nibble_cmp1) ? address_loop : address; // 3
+                    boolean address_b4 = (nibble_address & 0x10) != 0;
+                    int wave_address = nibble_address >> 5;
+                    boolean xor2 = (address_b4 ^ b7);
+                    boolean check1 = xor2 && active;
+                    boolean xor1 = (b15 ^ !nibble_cmp1);
+                    boolean nibble_add = b6 ? check1 && xor1 : (!nibble_cmp1 && check1);
+                    boolean nibble_subtract = b6 && !xor1 && active && !xor2;
+                    if (b7)
+                        wave_address -= (nibble_add ? 1 : 0) - (nibble_subtract ? 1 : 0);
+                    else
+                        wave_address += (nibble_add ? 1 : 0) - (nibble_subtract ? 1 : 0);
+                    wave_address &= 0xf_ffff;
+
+                    // Inline ROM read for performance (eliminates method call overhead)
+                    int newnibble;
+                    if (skipRomReads) {
+                        newnibble = 0;
+                    } else if (useFastRomRead) {
+                        int addr = waveAddrBase | wave_address;
+                        int bank = (addr >>> 19) & 7;
+                        newnibble = (bank == 0 ? waverom1[addr & 0x1f_ffff] & 0xff :
+                                     bank == 1 ? waverom2[addr & 0xf_ffff] & 0xff :
+                                     bank == 2 ? waverom3[addr & 0xf_ffff] & 0xff : 0);
+                    } else {
+                        newnibble = PCM_ReadROM(waveAddrBase | wave_address) & 0xff;
+                    }
+                    boolean newnibble_sel = address_b4 ^ ((b6 || !nibble_cmp1) && okey);
+                    if (newnibble_sel)
+                        newnibble = (newnibble >> 4) & 15;
+                    else
+                        newnibble &= 15;
+
+                    int sub_phase = (ram2[8] & 0x3fff); // 1
+                    int interp_ratio = (sub_phase >> 7) & 127;
+                    sub_phase += this.ram2[ram2[7] & 31][0] & 0xffff; // 5
+                    int sub_phase_of = (sub_phase >> 14) & 7;
+                    if (this.nfs != 0) {
+                        ram2[8] &= ~0x3fff;
+                        ram2[8] |= (short) (sub_phase & 0x3fff);
+                    }
+
+                    // address 0
+                    int address_cnt = address;
+                    // Skip ROM read for effectively silent voices - major performance optimization
+                    // Inline ROM read for performance
+                    int samp0;
+                    if (skipRomReads) {
+                        samp0 = 0;
+                    } else if (useFastRomRead) {
+                        int addr0 = waveAddrBase | address_cnt;
+                        int bank0 = (addr0 >>> 19) & 7;
+                        samp0 = bank0 == 0 ? waverom1[addr0 & 0x1f_ffff] :
+                                bank0 == 1 ? waverom2[addr0 & 0xf_ffff] :
+                                bank0 == 2 ? waverom3[addr0 & 0xf_ffff] : 0; // 18 signed
+                    } else {
+                        samp0 = PCM_ReadROM(waveAddrBase | address_cnt); // 18 signed
+                    }
+
+                    cmp1 = address;
+                    cmp2 = address_cnt;
+                    boolean nibble_cmp2 = (cmp1 & 0xf_fff0) == (cmp2 & 0xf_fff0); // 8
+                    cmp1 = b15 ? address_loop : address_end;
+                    cmp2 = address_cnt;
+                    boolean address_cmp = (cmp1 & 0xf_ffff) == (cmp2 & 0xf_ffff); // 9
+
+                    int next_address = address_cnt; // 11
+                    boolean usenew = !nibble_cmp2;
+                    boolean next_b15 = b15;
+
+                    cmp1 = (!b6 && address_cmp) ? address_loop : address_cnt;
+                    cmp2 = address_cnt;
+                    int address_cnt2 = (kon || (!b6 && address_cmp)) ? cmp1 : cmp2;
+
+                    boolean address_add = (!address_cmp && b6 && !b15) || (!address_cmp && !b6);
+                    boolean address_sub = !address_cmp && b6 && b15;
+                    if (b7)
+                        address_cnt2 -= (address_add ? 1 : 0) - (address_sub ? 1 : 0);
+                    else
+                        address_cnt2 += (address_add ? 1 : 0) - (address_sub ? 1 : 0);
+                    address_cnt = address_cnt2 & 0xf_ffff; // 11
+                    b15 = b6 && (b15 ^ address_cmp); // 11
+
+                    // Inline ROM read for performance
+                    int samp1;
+                    if (skipRomReads) {
+                        samp1 = 0;
+                    } else if (useFastRomRead) {
+                        int addr1 = waveAddrBase | address_cnt;
+                        int bank1 = (addr1 >>> 19) & 7;
+                        samp1 = bank1 == 0 ? waverom1[addr1 & 0x1f_ffff] :
+                                bank1 == 1 ? waverom2[addr1 & 0xf_ffff] :
+                                bank1 == 2 ? waverom3[addr1 & 0xf_ffff] : 0; // 20 signed
+                    } else {
+                        samp1 = PCM_ReadROM(waveAddrBase | address_cnt); // 20 signed
+                    }
+
+                    cmp1 = address;
+                    cmp2 = address_cnt;
+                    boolean nibble_cmp3 = (cmp1 & 0xf_fff0) == (cmp2 & 0xf_fff0); // 12
+                    cmp1 = b15 ? address_loop : address_end;
+                    cmp2 = address_cnt;
+                    address_cmp = (cmp1 & 0xf_ffff) == (cmp2 & 0xf_ffff); // 13
+
+                    if (sub_phase_of >= 1) {
+                        next_address = address_cnt; // 13
+                        usenew = !nibble_cmp3;
+                        next_b15 = b15;
+                    }
+
+                    cmp1 = (!b6 && address_cmp) ? address_loop : address_cnt;
+                    cmp2 = address_cnt;
+                    address_cnt2 = (kon || (!b6 && address_cmp)) ? cmp1 : cmp2;
+
+                    address_add = (!address_cmp && b6 && !b15) || (!address_cmp && !b6);
+                    address_sub = !address_cmp && b6 && b15;
+                    if (b7)
+                        address_cnt2 -= (address_add ? 1 : 0) - (address_sub ? 1 : 0);
+                    else
+                        address_cnt2 += (address_add ? 1 : 0) - (address_sub ? 1 : 0);
+                    address_cnt = address_cnt2 & 0xf_ffff; // 15
+                    b15 = b6 && (b15 ^ address_cmp); // 15
+
+                    // Inline ROM read for performance
+                    int samp2;
+                    if (skipRomReads) {
+                        samp2 = 0;
+                    } else if (useFastRomRead) {
+                        int addr2 = waveAddrBase | address_cnt;
+                        int bank2 = (addr2 >>> 19) & 7;
+                        samp2 = bank2 == 0 ? waverom1[addr2 & 0x1f_ffff] :
+                                bank2 == 1 ? waverom2[addr2 & 0xf_ffff] :
+                                bank2 == 2 ? waverom3[addr2 & 0xf_ffff] : 0; // 1 signed
+                    } else {
+                        samp2 = PCM_ReadROM(waveAddrBase | address_cnt); // 1 signed
+                    }
+
+                    cmp1 = address;
+                    cmp2 = address_cnt;
+                    boolean nibble_cmp4 = (cmp1 & 0xf_fff0) == (cmp2 & 0xf_fff0); // 16
+                    cmp1 = b15 ? address_loop : address_end;
+                    cmp2 = address_cnt;
+                    address_cmp = (cmp1 & 0xf_ffff) == (cmp2 & 0xf_ffff); // 17
+
+                    if (sub_phase_of >= 2) {
+                        next_address = address_cnt; // 17
+                        usenew = !nibble_cmp4;
+                        next_b15 = b15;
+                    }
+
+                    cmp1 = (!b6 && address_cmp) ? address_loop : address_cnt;
+                    cmp2 = address_cnt;
+                    address_cnt2 = (kon || (!b6 && address_cmp)) ? cmp1 : cmp2;
+
+                    address_add = (!address_cmp && b6 && !b15) || (!address_cmp && !b6);
+                    address_sub = !address_cmp && b6 && b15;
+                    if (b7)
+                        address_cnt2 -= (address_add ? 1 : 0) - (address_sub ? 1 : 0);
+                    else
+                        address_cnt2 += (address_add ? 1 : 0) - (address_sub ? 1 : 0);
+                    address_cnt = address_cnt2 & 0xf_ffff; // 19
+                    b15 = b6 && (b15 ^ address_cmp); // 19
+
+                    // Inline ROM read for performance
+                    int samp3;
+                    if (skipRomReads) {
+                        samp3 = 0;
+                    } else if (useFastRomRead) {
+                        int addr3 = waveAddrBase | address_cnt;
+                        int bank3 = (addr3 >>> 19) & 7;
+                        samp3 = bank3 == 0 ? waverom1[addr3 & 0x1f_ffff] :
+                                bank3 == 1 ? waverom2[addr3 & 0xf_ffff] :
+                                bank3 == 2 ? waverom3[addr3 & 0xf_ffff] : 0; // 5 signed
+                    } else {
+                        samp3 = PCM_ReadROM(waveAddrBase | address_cnt); // 5 signed
+                    }
+
+                    cmp1 = address;
+                    cmp2 = address_cnt;
+                    boolean nibble_cmp5 = (cmp1 & 0xf_fff0) == (cmp2 & 0xf_fff0); // 20
+                    cmp1 = b15 ? address_loop : address_end;
+                    cmp2 = address_cnt;
+                    address_cmp = (cmp1 & 0xf_ffff) == (cmp2 & 0xf_ffff); // 21
+
+                    if (sub_phase_of >= 3) {
+                        next_address = address_cnt; // 21
+                        usenew = !nibble_cmp5;
+                        next_b15 = b15;
+                    }
+
+                    cmp1 = (!b6 && address_cmp) ? address_loop : address_cnt;
+                    cmp2 = address_cnt;
+                    address_cnt2 = (kon || (!b6 && address_cmp)) ? cmp1 : cmp2;
+
+                    address_add = (!address_cmp && b6 && !b15) || (!address_cmp && !b6);
+                    address_sub = !address_cmp && b6 && b15;
+                    if (b7)
+                        address_cnt2 -= (address_add ? 1 : 0) - (address_sub ? 1 : 0);
+                    else
+                        address_cnt2 += (address_add ? 1 : 0) - (address_sub ? 1 : 0);
+                    address_cnt = address_cnt2 & 0xf_ffff; // 23
+                    // b15 = b6 && (b15 ^ address_cmp); // 23
+
+                    cmp1 = address;
+                    cmp2 = address_cnt;
+                    boolean nibble_cmp6 = (cmp1 & 0xf_fff0) == (cmp2 & 0xf_fff0); // 24
+
+                    if (sub_phase_of >= 4) {
+                        next_address = address_cnt; // 1
+                        usenew = !nibble_cmp6;
+                        // b15 is not updated?
+                    }
+
+                    if (active && this.nfs != 0)
+                        ram1[4] = next_address;
+
+                    if (this.nfs != 0) {
+                        ram2[8] &= (short) ~0x8000;
+                        ram2[8] |= (short) ((next_b15 ? 1 : 0) << 15);
+                    }
+
+                    // dpcm
+
+                    // 18
+                    int reference = ram1[5];
+
+                    // 19
+                    int preshift = samp0 << 10;
+                    int select_nibble = nibble_cmp2 ? old_nibble : newnibble;
+                    int shift = (10 - select_nibble) & 15;
+
+                    int shifted = (preshift << 1) >> shift;
+
+                    if (sub_phase_of >= 1)
+                        reference = addclip20(reference, shifted >> 1, shifted & 1);
+
+                    preshift = samp1 << 10;
+                    select_nibble = nibble_cmp3 ? old_nibble : newnibble;
+                    shift = (10 - select_nibble) & 15;
+
+                    shifted = (preshift << 1) >> shift;
+
+                    if (sub_phase_of >= 2)
+                        reference = addclip20(reference, shifted >> 1, shifted & 1);
+
+                    preshift = samp2 << 10;
+                    select_nibble = nibble_cmp4 ? old_nibble : newnibble;
+                    shift = (10 - select_nibble) & 15;
+
+                    shifted = (preshift << 1) >> shift;
+
+                    if (sub_phase_of >= 3)
+                        reference = addclip20(reference, shifted >> 1, shifted & 1);
+
+                    preshift = samp3 << 10;
+                    select_nibble = nibble_cmp5 ? old_nibble : newnibble;
+                    shift = (10 - select_nibble) & 15;
+
+                    shifted = (preshift << 1) >> shift;
+
+                    if (sub_phase_of >= 4)
+                        reference = addclip20(reference, shifted >> 1, shifted & 1);
+
+                    // interpolation
+
+                    int test = ram1[5];
+
+                    int step0 = multi(interp_lut_shifted[0][interp_ratio], (byte) samp0) >> 8;
+                    select_nibble = nibble_cmp2 ? old_nibble : newnibble;
+                    shift = (10 - select_nibble) & 15;
+                    step0 = (step0 << 1) >> shift;
+
+                    test = addclip20(test, step0 >> 1, step0 & 1);
+
+                    int step1 = multi(interp_lut_shifted[1][interp_ratio], (byte) samp1) >> 8;
+                    select_nibble = nibble_cmp3 ? old_nibble : newnibble;
+                    shift = (10 - select_nibble) & 15;
+                    step1 = (step1 << 1) >> shift;
+
+                    test = addclip20(test, step1 >> 1, step1 & 1);
+
+                    int step2 = multi(interp_lut_shifted[2][interp_ratio], (byte) samp2) >> 8;
+                    select_nibble = nibble_cmp4 ? old_nibble : newnibble;
+                    shift = (10 - select_nibble) & 15;
+                    step2 = (step2 << 1) >> shift;
+
+                    int reg1 = ram1[1];
+                    int reg3 = ram1[3];
+                    int reg2_6 = ((ram2[6] & 0xffff) >> 8) & 127;
+
+                    test = addclip20(test, step2 >> 1, step2 & 1);
+
+                    int filter = ram2[11] & 0xffff;
+                    int v3;
+
+                    if (mcu.mcu_mk1) {
+                        int mult1 = multi(reg1, (byte) (filter >> 8)); // 8
+                        int mult2 = multi(reg1, (byte) ((filter >> 1) & 127)); // 9
+                        int mult3 = multi(reg1, (byte) reg2_6); // 10
+
+                        int v2 = addclip20(reg3, mult1 >> 6, (mult1 >> 5) & 1); // 9
+                        int v1 = addclip20(v2, mult2 >> 13, (mult2 >> 12) & 1); // 10
+                        int subvar = addclip20(v1, mult3 >> 6, (mult3 >> 5) & 1); // 11
+
+                        ram1[3] = v1;
+
+                        v3 = addclip20(test, subvar ^ 0xfffff, 1); // 12
+
+                        int mult4 = multi(v3, (byte) (filter >> 8));
+                        int mult5 = multi(v3, (byte) ((filter >> 1) & 127));
+                        int v4 = addclip20(reg1, mult4 >> 6, (mult4 >> 5) & 1); // 14
+                        int v5 = addclip20(v4, mult5 >> 13, (mult5 >> 12) & 1); // 15
+
+                        ram1[1] = v5;
+                    } else {
+                        // hack: use 32-bit math to avoid overflow
+                        int mult1 = reg1 * (byte) (filter >> 8); // 8
+                        int mult2 = reg1 * (byte) ((filter >> 1) & 127); // 9
+                        int mult3 = reg1 * (byte) reg2_6; // 10
+
+                        int v2 = reg3 + (mult1 >> 6) + ((mult1 >> 5) & 1); // 9
+                        int v1 = v2 + (mult2 >> 13) + ((mult2 >> 12) & 1); // 10
+                        int subvar = v1 + (mult3 >> 6) + ((mult3 >> 5) & 1); // 11
+
+                        ram1[3] = v1;
+
+                        int tests = test;
+                        tests <<= 12;
+                        tests >>= 12;
+
+                        v3 = tests - subvar; // 12
+
+                        int mult4 = v3 * (byte) (filter >> 8);
+                        int mult5 = v3 * (byte) ((filter >> 1) & 127);
+                        int v4 = reg1 + (mult4 >> 6) + ((mult4 >> 5) & 1); // 14
+                        int v5 = v4 + (mult5 >> 13) + ((mult5 >> 12) & 1); // 15
+
+                        ram1[1] = v5;
+                    }
+
+                    ram1[5] = reference;
+
+                    // Check if this voice wants to fire an IRQ
+                    boolean wantsIrq = active && (ram2[6] & 1) != 0 && (ram2[8] & 0x4000) == 0 && irq_flag;
+                    if (wantsIrq) {
+                        if (this.irq_assert == 0) {
+                            // IRQ can fire immediately
+                            if (this.nfs != 0)
+                                ram2[8] |= 0x4000;
+                            this.irq_assert = 1;
+                            this.irq_channel = slot;
+                            if (mcu.mcu_jv880)
+                                mcu.MCU_GA_SetGAInt(5, true);
+                            else
+                                mcu.interrupt.MCU_Interrupt_SetRequest(INTERRUPT_SOURCE_IRQ0.ordinal(), true);
                         } else {
-                            diagEnvSpeedNonZero++;
+                            // IRQ is BLOCKED - queue it for later processing
+                            // This prevents lost IRQs that cause voice accumulation
+                            // Also set the 0x4000 bit to prevent re-queueing on subsequent loops
+                            if (this.nfs != 0)
+                                ram2[8] |= 0x4000;
+                            this.irq_pending_mask |= (1 << slot);
+                            diagIrqBlocked++;
                         }
-                        voiceFrozenCounter[slot] = 0;
                     }
 
-                    // Silent voices can be deallocated (after brief minimum age)
-                    if (envSilent && voiceAge > 1000) {
-                        diagEnvSilent++;
-                        shouldDeallocate = true;
-                    }
+                    int[] volmul1 = scratch_volmul1;
+                    int[] volmul2 = scratch_volmul2;
+                    volmul1[0] = 0;
+                    volmul2[0] = 0;
 
-                    if (shouldDeallocate) {
-                        // Force release this voice
-                        int slotBit = 1 << slot;
-                        this.voice_mask_pending &= ~slotBit;
-                        this.voice_mask &= ~slotBit;
-                        voiceMaskClearCount++;
-                        voiceFrozenCounter[slot] = 0;
-                        voiceLastKeyOn[slot] = 0;
-                        key = 0;
-                        active = false;
-                        kon = false;
+                    // Use pre-computed envelope 0 value if available, otherwise compute
+                    if ((env0ProcessedMask & (1 << slot)) != 0) {
+                        volmul1[0] = soaVolmul0[slot];
+                    } else {
+                        calc_tv(0, ram2[3] & 0xffff, ram2, 9, active, volmul1);
                     }
-                }
+                    calc_tv(1, ram2[4] & 0xffff, ram2, 10, active, volmul2);
+                    calc_tv(2, ram2[5] & 0xffff, ram2, 11, active, null);
 
-                // Skip voices already processed by vectorized path (after deallocation check)
-                if ((vectorProcessedMask & (1 << slot)) != 0) {
-                    // Still need slot2 mixing for reverb/chorus
+                    // if (volmul1 && volmul2)
+                    //     volmul1 += 0;
+
+                    int sample = (ram2[6] & 2) == 0 ? ram1[3] : v3;
+                    //sample = test;
+
+                    int multiv1 = multi(sample, (byte) (volmul1[0] >> 8));
+                    int multiv2 = multi(sample, (byte) ((volmul1[0] >> 1) & 127));
+
+                    int sample2 = addclip20(multiv1 >> 6, multiv2 >> 13, ((multiv2 >> 12) | (multiv1 >> 5)) & 1);
+
+                    int multiv3 = multi(sample2, (byte) (volmul2[0] >> 8));
+                    int multiv4 = multi(sample2, (byte) ((volmul2[0] >> 1) & 127));
+
+                    int sample3 = addclip20(multiv3 >> 6, multiv4 >> 13, ((multiv4 >> 12) | (multiv3 >> 5)) & 1);
+
+                    int pan = active ? ram2[1] & 0xffff : 0;
+                    int rc = active ? ram2[2] & 0xffff : 0;
+
+                    int sampl = multi(sample3, (byte) ((pan >> 8) & 255));
+                    int sampr = multi(sample3, (byte) ((pan >> 0) & 255));
+
+                    int rc0 = multi(sample3, (byte) ((rc >> 8) & 255)) >> 5; // reverb
+                    int rc1 = multi(sample3, (byte) ((rc >> 0) & 255)) >> 5; // chorus
+
+                    // mix reverb/chorus?
                     int slot2 = (slot == reg_slots - 1) ? 31 : slot + 1;
                     switch (slot2) {
-                        case 17: this.ram1[31][1] = addclip20(this.ram1[31][1], rcadd[0] >> 1, rcadd[0] & 1); break;
-                        case 18: this.ram1[31][3] = addclip20(this.ram1[31][3], rcadd[1] >> 1, rcadd[1] & 1); break;
-                        case 21: this.ram1[31][1] = addclip20(this.ram1[31][1], rcadd[2] >> 1, rcadd[2] & 1); break;
-                        case 22: this.ram1[31][3] = addclip20(this.ram1[31][3], rcadd[3] >> 1, rcadd[3] & 1); break;
-                        case 23: this.ram1[31][1] = addclip20(this.ram1[31][1], rcadd[4] >> 1, rcadd[4] & 1); break;
-                        case 31: this.ram1[31][3] = addclip20(this.ram1[31][3], rcadd[5] >> 1, rcadd[5] & 1); break;
-                    }
-                    if (slot == reg_slots - 1) {
-                        this.accum_l = this.ram1[31][1];
-                        this.accum_r = this.ram1[31][3];
-                    }
-                    continue;
-                }
+                        // 17, 18 - reverb
 
-                // Early exit for truly idle voices (key=0)
-                if (key == 0) {
-                    diagEarlyExits++;
-                    // Still need slot2 mixing for reverb/chorus
-                    int slot2 = (slot == reg_slots - 1) ? 31 : slot + 1;
-                    switch (slot2) {
                         case 17:
                             this.ram1[31][1] = addclip20(this.ram1[31][1], rcadd[0] >> 1, rcadd[0] & 1);
-                            this.rcsum[1] = addclip20(this.rcsum[1], rcadd2[0] >> 1, rcadd2[0] & 1);
                             break;
                         case 18:
                             this.ram1[31][3] = addclip20(this.ram1[31][3], rcadd[1] >> 1, rcadd[1] & 1);
-                            this.rcsum[1] = addclip20(this.rcsum[1], rcadd2[1] >> 1, rcadd2[1] & 1);
                             break;
                         case 21:
                             this.ram1[31][1] = addclip20(this.ram1[31][1], rcadd[2] >> 1, rcadd[2] & 1);
-                            this.rcsum[0] = addclip20(this.rcsum[0], rcadd2[2] >> 1, rcadd2[2] & 1);
                             break;
                         case 22:
                             this.ram1[31][3] = addclip20(this.ram1[31][3], rcadd[3] >> 1, rcadd[3] & 1);
-                            this.rcsum[1] = addclip20(this.rcsum[1], rcadd2[3] >> 1, rcadd2[3] & 1);
                             break;
                         case 23:
                             this.ram1[31][1] = addclip20(this.ram1[31][1], rcadd[4] >> 1, rcadd[4] & 1);
-                            this.rcsum[0] = addclip20(this.rcsum[0], rcadd2[4] >> 1, rcadd2[4] & 1);
                             break;
                         case 31:
                             this.ram1[31][3] = addclip20(this.ram1[31][3], rcadd[5] >> 1, rcadd[5] & 1);
+                            break;
+                    }
+
+                    int suml = addclip20(this.ram1[31][1], sampl >> 6, (sampl >> 5) & 1);
+                    int sumr = addclip20(this.ram1[31][3], sampr >> 6, (sampr >> 5) & 1);
+
+                    switch (slot2) {
+                        case 17:
+                            this.rcsum[1] = addclip20(this.rcsum[1], rcadd2[0] >> 1, rcadd2[0] & 1);
+                            break;
+                        case 18:
+                            this.rcsum[1] = addclip20(this.rcsum[1], rcadd2[1] >> 1, rcadd2[1] & 1);
+                            break;
+                        case 21:
+                            this.rcsum[0] = addclip20(this.rcsum[0], rcadd2[2] >> 1, rcadd2[2] & 1);
+                            break;
+                        case 22:
+                            this.rcsum[1] = addclip20(this.rcsum[1], rcadd2[3] >> 1, rcadd2[3] & 1);
+                            break;
+                        case 23:
+                            this.rcsum[0] = addclip20(this.rcsum[0], rcadd2[4] >> 1, rcadd2[4] & 1);
+                            break;
+                        case 31:
                             this.rcsum[1] = addclip20(this.rcsum[1], rcadd2[5] >> 1, rcadd2[5] & 1);
                             break;
                     }
-                    // For last slot, set output accumulators
-                    if (slot == reg_slots - 1) {
-                        this.accum_l = this.ram1[31][1];
-                        this.accum_r = this.ram1[31][3];
-                    }
-                    // Clear ALL voice state (including ram2[11] filter state)
-                    if (this.nfs != 0) {
-                        ram1[1] = 0;
-                        ram1[3] = 0;
-                        ram1[5] = 0;
-                    }
-                    ram2[8] = 0;
-                    ram2[9] = 0;
-                    ram2[10] = 0;
-                    ram2[11] = 0;  // Also clear filter state
-                    continue;
-                }
 
-                // Full voice processing (key != 0)
-                diagFullProcess++;
+                    this.rcsum[0] = addclip20(this.rcsum[0], rc0 >> 1, rc0 & 1);
+                    this.rcsum[1] = addclip20(this.rcsum[1], rc1 >> 1, rc1 & 1);
 
-                // Ultra-fast-path voices are now handled by vectorized processing above
-                // Here we only handle skipForEnvelope (nearly silent voices)
-                int currentEnvLevel = ram2[9] & 0x7fff;
-                boolean skipForEnvelope = (currentEnvLevel < 200) && !kon;
-                boolean skipRomReads = skipForEnvelope;
-                if (skipRomReads) {
-                    diagRomReadsSkipped++;
-                } else {
-                    diagRomReadsPerformed++;
-                    romReadVoiceCount++;  // Count this voice as having done ROM reads
-                }
-
-                // address generator
-
-                boolean b15 = (ram2[8] & 0x8000) != 0; // 0
-                boolean b6 = (ram2[7] & 0x40) != 0; // 1
-                boolean b7 = (ram2[7] & 0x80) != 0; // 1
-                int hiaddr = ((ram2[7] & 0xffff) >> 8) & 15; // 1
-                int old_nibble = ((ram2[7] & 0xffff) >> 12) & 15; // 1
-                // Pre-compute ROM address base once per voice (optimization)
-                int waveAddrBase = hiaddr << 20;
-
-                int address = ram1[4]; // 0
-                int address_end = ram1[0]; // 1 or 2
-                int address_loop = ram1[2]; // 2 or 1
-
-                int cmp1 = b15 ? address_loop : address_end;
-                int cmp2 = address;
-                boolean nibble_cmp1 = (cmp1 & 0xf_fff0) == (cmp2 & 0xf_fff0); // 2
-                boolean irq_flag = false;
-
-                // fixme:
-                if (kon)
-                    irq_flag = ((cmp1 + address_loop) & 0x10_0000) != 0;
-                else
-                    irq_flag = ((address + ((-address_loop) & 0xf_ffff)) & 0x10_0000) != 0;
-                irq_flag ^= b7;
-
-                int nibble_address = (!b6 && nibble_cmp1) ? address_loop : address; // 3
-                boolean address_b4 = (nibble_address & 0x10) != 0;
-                int wave_address = nibble_address >> 5;
-                boolean xor2 = (address_b4 ^ b7);
-                boolean check1 = xor2 && active;
-                boolean xor1 = (b15 ^ !nibble_cmp1);
-                boolean nibble_add = b6 ? check1 && xor1 : (!nibble_cmp1 && check1);
-                boolean nibble_subtract = b6 && !xor1 && active && !xor2;
-                if (b7)
-                    wave_address -= (nibble_add ? 1 : 0) - (nibble_subtract ? 1 : 0);
-                else
-                    wave_address += (nibble_add ? 1 : 0) - (nibble_subtract ? 1 : 0);
-                wave_address &= 0xf_ffff;
-
-                // Inline ROM read for performance (eliminates method call overhead)
-                int newnibble;
-                if (skipRomReads) {
-                    newnibble = 0;
-                } else if (useFastRomRead) {
-                    int addr = waveAddrBase | wave_address;
-                    int bank = (addr >>> 19) & 7;
-                    newnibble = (bank == 0 ? waverom1[addr & 0x1f_ffff] & 0xff :
-                                 bank == 1 ? waverom2[addr & 0xf_ffff] & 0xff :
-                                 bank == 2 ? waverom3[addr & 0xf_ffff] & 0xff : 0);
-                } else {
-                    newnibble = PCM_ReadROM(waveAddrBase | wave_address) & 0xff;
-                }
-                boolean newnibble_sel = address_b4 ^ ((b6 || !nibble_cmp1) && okey);
-                if (newnibble_sel)
-                    newnibble = (newnibble >> 4) & 15;
-                else
-                    newnibble &= 15;
-
-                int sub_phase = (ram2[8] & 0x3fff); // 1
-                int interp_ratio = (sub_phase >> 7) & 127;
-                sub_phase += this.ram2[ram2[7] & 31][0] & 0xffff; // 5
-                int sub_phase_of = (sub_phase >> 14) & 7;
-                if (this.nfs != 0) {
-                    ram2[8] &= ~0x3fff;
-                    ram2[8] |= (short) (sub_phase & 0x3fff);
-                }
-
-                // address 0
-                int address_cnt = address;
-                // Skip ROM read for effectively silent voices - major performance optimization
-                // Inline ROM read for performance
-                int samp0;
-                if (skipRomReads) {
-                    samp0 = 0;
-                } else if (useFastRomRead) {
-                    int addr0 = waveAddrBase | address_cnt;
-                    int bank0 = (addr0 >>> 19) & 7;
-                    samp0 = bank0 == 0 ? waverom1[addr0 & 0x1f_ffff] :
-                            bank0 == 1 ? waverom2[addr0 & 0xf_ffff] :
-                            bank0 == 2 ? waverom3[addr0 & 0xf_ffff] : 0; // 18 signed
-                } else {
-                    samp0 = PCM_ReadROM(waveAddrBase | address_cnt); // 18 signed
-                }
-
-                cmp1 = address;
-                cmp2 = address_cnt;
-                boolean nibble_cmp2 = (cmp1 & 0xf_fff0) == (cmp2 & 0xf_fff0); // 8
-                cmp1 = b15 ? address_loop : address_end;
-                cmp2 = address_cnt;
-                boolean address_cmp = (cmp1 & 0xf_ffff) == (cmp2 & 0xf_ffff); // 9
-
-                int next_address = address_cnt; // 11
-                boolean usenew = !nibble_cmp2;
-                boolean next_b15 = b15;
-
-                cmp1 = (!b6 && address_cmp) ? address_loop : address_cnt;
-                cmp2 = address_cnt;
-                int address_cnt2 = (kon || (!b6 && address_cmp)) ? cmp1 : cmp2;
-
-                boolean address_add = (!address_cmp && b6 && !b15) || (!address_cmp && !b6);
-                boolean address_sub = !address_cmp && b6 && b15;
-                if (b7)
-                    address_cnt2 -= (address_add ? 1 : 0) - (address_sub ? 1 : 0);
-                else
-                    address_cnt2 += (address_add ? 1 : 0) - (address_sub ? 1 : 0);
-                address_cnt = address_cnt2 & 0xf_ffff; // 11
-                b15 = b6 && (b15 ^ address_cmp); // 11
-
-                // Inline ROM read for performance
-                int samp1;
-                if (skipRomReads) {
-                    samp1 = 0;
-                } else if (useFastRomRead) {
-                    int addr1 = waveAddrBase | address_cnt;
-                    int bank1 = (addr1 >>> 19) & 7;
-                    samp1 = bank1 == 0 ? waverom1[addr1 & 0x1f_ffff] :
-                            bank1 == 1 ? waverom2[addr1 & 0xf_ffff] :
-                            bank1 == 2 ? waverom3[addr1 & 0xf_ffff] : 0; // 20 signed
-                } else {
-                    samp1 = PCM_ReadROM(waveAddrBase | address_cnt); // 20 signed
-                }
-
-                cmp1 = address;
-                cmp2 = address_cnt;
-                boolean nibble_cmp3 = (cmp1 & 0xf_fff0) == (cmp2 & 0xf_fff0); // 12
-                cmp1 = b15 ? address_loop : address_end;
-                cmp2 = address_cnt;
-                address_cmp = (cmp1 & 0xf_ffff) == (cmp2 & 0xf_ffff); // 13
-
-                if (sub_phase_of >= 1) {
-                    next_address = address_cnt; // 13
-                    usenew = !nibble_cmp3;
-                    next_b15 = b15;
-                }
-
-                cmp1 = (!b6 && address_cmp) ? address_loop : address_cnt;
-                cmp2 = address_cnt;
-                address_cnt2 = (kon || (!b6 && address_cmp)) ? cmp1 : cmp2;
-
-                address_add = (!address_cmp && b6 && !b15) || (!address_cmp && !b6);
-                address_sub = !address_cmp && b6 && b15;
-                if (b7)
-                    address_cnt2 -= (address_add ? 1 : 0) - (address_sub ? 1 : 0);
-                else
-                    address_cnt2 += (address_add ? 1 : 0) - (address_sub ? 1 : 0);
-                address_cnt = address_cnt2 & 0xf_ffff; // 15
-                b15 = b6 && (b15 ^ address_cmp); // 15
-
-                // Inline ROM read for performance
-                int samp2;
-                if (skipRomReads) {
-                    samp2 = 0;
-                } else if (useFastRomRead) {
-                    int addr2 = waveAddrBase | address_cnt;
-                    int bank2 = (addr2 >>> 19) & 7;
-                    samp2 = bank2 == 0 ? waverom1[addr2 & 0x1f_ffff] :
-                            bank2 == 1 ? waverom2[addr2 & 0xf_ffff] :
-                            bank2 == 2 ? waverom3[addr2 & 0xf_ffff] : 0; // 1 signed
-                } else {
-                    samp2 = PCM_ReadROM(waveAddrBase | address_cnt); // 1 signed
-                }
-
-                cmp1 = address;
-                cmp2 = address_cnt;
-                boolean nibble_cmp4 = (cmp1 & 0xf_fff0) == (cmp2 & 0xf_fff0); // 16
-                cmp1 = b15 ? address_loop : address_end;
-                cmp2 = address_cnt;
-                address_cmp = (cmp1 & 0xf_ffff) == (cmp2 & 0xf_ffff); // 17
-
-                if (sub_phase_of >= 2) {
-                    next_address = address_cnt; // 17
-                    usenew = !nibble_cmp4;
-                    next_b15 = b15;
-                }
-
-                cmp1 = (!b6 && address_cmp) ? address_loop : address_cnt;
-                cmp2 = address_cnt;
-                address_cnt2 = (kon || (!b6 && address_cmp)) ? cmp1 : cmp2;
-
-                address_add = (!address_cmp && b6 && !b15) || (!address_cmp && !b6);
-                address_sub = !address_cmp && b6 && b15;
-                if (b7)
-                    address_cnt2 -= (address_add ? 1 : 0) - (address_sub ? 1 : 0);
-                else
-                    address_cnt2 += (address_add ? 1 : 0) - (address_sub ? 1 : 0);
-                address_cnt = address_cnt2 & 0xf_ffff; // 19
-                b15 = b6 && (b15 ^ address_cmp); // 19
-
-                // Inline ROM read for performance
-                int samp3;
-                if (skipRomReads) {
-                    samp3 = 0;
-                } else if (useFastRomRead) {
-                    int addr3 = waveAddrBase | address_cnt;
-                    int bank3 = (addr3 >>> 19) & 7;
-                    samp3 = bank3 == 0 ? waverom1[addr3 & 0x1f_ffff] :
-                            bank3 == 1 ? waverom2[addr3 & 0xf_ffff] :
-                            bank3 == 2 ? waverom3[addr3 & 0xf_ffff] : 0; // 5 signed
-                } else {
-                    samp3 = PCM_ReadROM(waveAddrBase | address_cnt); // 5 signed
-                }
-
-                cmp1 = address;
-                cmp2 = address_cnt;
-                boolean nibble_cmp5 = (cmp1 & 0xf_fff0) == (cmp2 & 0xf_fff0); // 20
-                cmp1 = b15 ? address_loop : address_end;
-                cmp2 = address_cnt;
-                address_cmp = (cmp1 & 0xf_ffff) == (cmp2 & 0xf_ffff); // 21
-
-                if (sub_phase_of >= 3) {
-                    next_address = address_cnt; // 21
-                    usenew = !nibble_cmp5;
-                    next_b15 = b15;
-                }
-
-                cmp1 = (!b6 && address_cmp) ? address_loop : address_cnt;
-                cmp2 = address_cnt;
-                address_cnt2 = (kon || (!b6 && address_cmp)) ? cmp1 : cmp2;
-
-                address_add = (!address_cmp && b6 && !b15) || (!address_cmp && !b6);
-                address_sub = !address_cmp && b6 && b15;
-                if (b7)
-                    address_cnt2 -= (address_add ? 1 : 0) - (address_sub ? 1 : 0);
-                else
-                    address_cnt2 += (address_add ? 1 : 0) - (address_sub ? 1 : 0);
-                address_cnt = address_cnt2 & 0xf_ffff; // 23
-                // b15 = b6 && (b15 ^ address_cmp); // 23
-
-                cmp1 = address;
-                cmp2 = address_cnt;
-                boolean nibble_cmp6 = (cmp1 & 0xf_fff0) == (cmp2 & 0xf_fff0); // 24
-
-                if (sub_phase_of >= 4) {
-                    next_address = address_cnt; // 1
-                    usenew = !nibble_cmp6;
-                    // b15 is not updated?
-                }
-
-                if (active && this.nfs != 0)
-                    ram1[4] = next_address;
-
-                if (this.nfs != 0) {
-                    ram2[8] &= (short) ~0x8000;
-                    ram2[8] |= (short) ((next_b15 ? 1 : 0) << 15);
-                }
-
-                // dpcm
-
-                // 18
-                int reference = ram1[5];
-
-                // 19
-                int preshift = samp0 << 10;
-                int select_nibble = nibble_cmp2 ? old_nibble : newnibble;
-                int shift = (10 - select_nibble) & 15;
-
-                int shifted = (preshift << 1) >> shift;
-
-                if (sub_phase_of >= 1)
-                    reference = addclip20(reference, shifted >> 1, shifted & 1);
-
-                preshift = samp1 << 10;
-                select_nibble = nibble_cmp3 ? old_nibble : newnibble;
-                shift = (10 - select_nibble) & 15;
-
-                shifted = (preshift << 1) >> shift;
-
-                if (sub_phase_of >= 2)
-                    reference = addclip20(reference, shifted >> 1, shifted & 1);
-
-                preshift = samp2 << 10;
-                select_nibble = nibble_cmp4 ? old_nibble : newnibble;
-                shift = (10 - select_nibble) & 15;
-
-                shifted = (preshift << 1) >> shift;
-
-                if (sub_phase_of >= 3)
-                    reference = addclip20(reference, shifted >> 1, shifted & 1);
-
-                preshift = samp3 << 10;
-                select_nibble = nibble_cmp5 ? old_nibble : newnibble;
-                shift = (10 - select_nibble) & 15;
-
-                shifted = (preshift << 1) >> shift;
-
-                if (sub_phase_of >= 4)
-                    reference = addclip20(reference, shifted >> 1, shifted & 1);
-
-                // interpolation
-
-                int test = ram1[5];
-
-                int step0 = multi(interp_lut_shifted[0][interp_ratio], (byte) samp0) >> 8;
-                select_nibble = nibble_cmp2 ? old_nibble : newnibble;
-                shift = (10 - select_nibble) & 15;
-                step0 = (step0 << 1) >> shift;
-
-                test = addclip20(test, step0 >> 1, step0 & 1);
-
-                int step1 = multi(interp_lut_shifted[1][interp_ratio], (byte) samp1) >> 8;
-                select_nibble = nibble_cmp3 ? old_nibble : newnibble;
-                shift = (10 - select_nibble) & 15;
-                step1 = (step1 << 1) >> shift;
-
-                test = addclip20(test, step1 >> 1, step1 & 1);
-
-                int step2 = multi(interp_lut_shifted[2][interp_ratio], (byte) samp2) >> 8;
-                select_nibble = nibble_cmp4 ? old_nibble : newnibble;
-                shift = (10 - select_nibble) & 15;
-                step2 = (step2 << 1) >> shift;
-
-                int reg1 = ram1[1];
-                int reg3 = ram1[3];
-                int reg2_6 = ((ram2[6] & 0xffff) >> 8) & 127;
-
-                test = addclip20(test, step2 >> 1, step2 & 1);
-
-                int filter = ram2[11] & 0xffff;
-                int v3;
-
-                if (mcu.mcu_mk1) {
-                    int mult1 = multi(reg1, (byte) (filter >> 8)); // 8
-                    int mult2 = multi(reg1, (byte) ((filter >> 1) & 127)); // 9
-                    int mult3 = multi(reg1, (byte) reg2_6); // 10
-
-                    int v2 = addclip20(reg3, mult1 >> 6, (mult1 >> 5) & 1); // 9
-                    int v1 = addclip20(v2, mult2 >> 13, (mult2 >> 12) & 1); // 10
-                    int subvar = addclip20(v1, mult3 >> 6, (mult3 >> 5) & 1); // 11
-
-                    ram1[3] = v1;
-
-                    v3 = addclip20(test, subvar ^ 0xfffff, 1); // 12
-
-                    int mult4 = multi(v3, (byte) (filter >> 8));
-                    int mult5 = multi(v3, (byte) ((filter >> 1) & 127));
-                    int v4 = addclip20(reg1, mult4 >> 6, (mult4 >> 5) & 1); // 14
-                    int v5 = addclip20(v4, mult5 >> 13, (mult5 >> 12) & 1); // 15
-
-                    ram1[1] = v5;
-                } else {
-                    // hack: use 32-bit math to avoid overflow
-                    int mult1 = reg1 * (byte) (filter >> 8); // 8
-                    int mult2 = reg1 * (byte) ((filter >> 1) & 127); // 9
-                    int mult3 = reg1 * (byte) reg2_6; // 10
-
-                    int v2 = reg3 + (mult1 >> 6) + ((mult1 >> 5) & 1); // 9
-                    int v1 = v2 + (mult2 >> 13) + ((mult2 >> 12) & 1); // 10
-                    int subvar = v1 + (mult3 >> 6) + ((mult3 >> 5) & 1); // 11
-
-                    ram1[3] = v1;
-
-                    int tests = test;
-                    tests <<= 12;
-                    tests >>= 12;
-
-                    v3 = tests - subvar; // 12
-
-                    int mult4 = v3 * (byte) (filter >> 8);
-                    int mult5 = v3 * (byte) ((filter >> 1) & 127);
-                    int v4 = reg1 + (mult4 >> 6) + ((mult4 >> 5) & 1); // 14
-                    int v5 = v4 + (mult5 >> 13) + ((mult5 >> 12) & 1); // 15
-
-                    ram1[1] = v5;
-                }
-
-                ram1[5] = reference;
-
-                // Check if this voice wants to fire an IRQ
-                boolean wantsIrq = active && (ram2[6] & 1) != 0 && (ram2[8] & 0x4000) == 0 && irq_flag;
-                if (wantsIrq) {
-                    if (this.irq_assert == 0) {
-                        // IRQ can fire immediately
-                        if (this.nfs != 0)
-                            ram2[8] |= 0x4000;
-                        this.irq_assert = 1;
-                        this.irq_channel = slot;
-                        diagIrqFired++;
-                        if (mcu.mcu_jv880)
-                            mcu.MCU_GA_SetGAInt(5, true);
-                        else
-                            mcu.interrupt.MCU_Interrupt_SetRequest(INTERRUPT_SOURCE_IRQ0.ordinal(), true);
+                    if (slot != reg_slots - 1) {
+                        this.ram1[31][1] = suml;
+                        this.ram1[31][3] = sumr;
                     } else {
-                        // IRQ is BLOCKED - queue it for later processing
-                        // This prevents lost IRQs that cause voice accumulation
-                        // Also set the 0x4000 bit to prevent re-queueing on subsequent loops
-                        if (this.nfs != 0)
-                            ram2[8] |= 0x4000;
-                        this.irq_pending_mask |= (1 << slot);
-                        diagIrqBlocked++;
-                    }
-                }
-
-                int[] volmul1 = scratch_volmul1;
-                int[] volmul2 = scratch_volmul2;
-                volmul1[0] = 0;
-                volmul2[0] = 0;
-
-                // Use pre-computed envelope 0 value if available, otherwise compute
-                if ((env0ProcessedMask & (1 << slot)) != 0) {
-                    volmul1[0] = soaVolmul0[slot];
-                } else {
-                    calc_tv(0, ram2[3] & 0xffff, ram2, 9, active, volmul1);
-                }
-                calc_tv(1, ram2[4] & 0xffff, ram2, 10, active, volmul2);
-                calc_tv(2, ram2[5] & 0xffff, ram2, 11, active, null);
-
-                // if (volmul1 && volmul2)
-                //     volmul1 += 0;
-
-                int sample = (ram2[6] & 2) == 0 ? ram1[3] : v3;
-                //sample = test;
-
-                int multiv1 = multi(sample, (byte) (volmul1[0] >> 8));
-                int multiv2 = multi(sample, (byte) ((volmul1[0] >> 1) & 127));
-
-                int sample2 = addclip20(multiv1 >> 6, multiv2 >> 13, ((multiv2 >> 12) | (multiv1 >> 5)) & 1);
-
-                int multiv3 = multi(sample2, (byte) (volmul2[0] >> 8));
-                int multiv4 = multi(sample2, (byte) ((volmul2[0] >> 1) & 127));
-
-                int sample3 = addclip20(multiv3 >> 6, multiv4 >> 13, ((multiv4 >> 12) | (multiv3 >> 5)) & 1);
-
-                int pan = active ? ram2[1] & 0xffff : 0;
-                int rc = active ? ram2[2] & 0xffff : 0;
-
-                int sampl = multi(sample3, (byte) ((pan >> 8) & 255));
-                int sampr = multi(sample3, (byte) ((pan >> 0) & 255));
-
-                int rc0 = multi(sample3, (byte) ((rc >> 8) & 255)) >> 5; // reverb
-                int rc1 = multi(sample3, (byte) ((rc >> 0) & 255)) >> 5; // chorus
-
-                // mix reverb/chorus?
-                int slot2 = (slot == reg_slots - 1) ? 31 : slot + 1;
-                switch (slot2) {
-                    // 17, 18 - reverb
-
-                    case 17:
-                        this.ram1[31][1] = addclip20(this.ram1[31][1], rcadd[0] >> 1, rcadd[0] & 1);
-                        break;
-                    case 18:
-                        this.ram1[31][3] = addclip20(this.ram1[31][3], rcadd[1] >> 1, rcadd[1] & 1);
-                        break;
-                    case 21:
-                        this.ram1[31][1] = addclip20(this.ram1[31][1], rcadd[2] >> 1, rcadd[2] & 1);
-                        break;
-                    case 22:
-                        this.ram1[31][3] = addclip20(this.ram1[31][3], rcadd[3] >> 1, rcadd[3] & 1);
-                        break;
-                    case 23:
-                        this.ram1[31][1] = addclip20(this.ram1[31][1], rcadd[4] >> 1, rcadd[4] & 1);
-                        break;
-                    case 31:
-                        this.ram1[31][3] = addclip20(this.ram1[31][3], rcadd[5] >> 1, rcadd[5] & 1);
-                        break;
-                }
-
-                int suml = addclip20(this.ram1[31][1], sampl >> 6, (sampl >> 5) & 1);
-                int sumr = addclip20(this.ram1[31][3], sampr >> 6, (sampr >> 5) & 1);
-
-                switch (slot2) {
-                    case 17:
-                        this.rcsum[1] = addclip20(this.rcsum[1], rcadd2[0] >> 1, rcadd2[0] & 1);
-                        break;
-                    case 18:
-                        this.rcsum[1] = addclip20(this.rcsum[1], rcadd2[1] >> 1, rcadd2[1] & 1);
-                        break;
-                    case 21:
-                        this.rcsum[0] = addclip20(this.rcsum[0], rcadd2[2] >> 1, rcadd2[2] & 1);
-                        break;
-                    case 22:
-                        this.rcsum[1] = addclip20(this.rcsum[1], rcadd2[3] >> 1, rcadd2[3] & 1);
-                        break;
-                    case 23:
-                        this.rcsum[0] = addclip20(this.rcsum[0], rcadd2[4] >> 1, rcadd2[4] & 1);
-                        break;
-                    case 31:
-                        this.rcsum[1] = addclip20(this.rcsum[1], rcadd2[5] >> 1, rcadd2[5] & 1);
-                        break;
-                }
-
-                this.rcsum[0] = addclip20(this.rcsum[0], rc0 >> 1, rc0 & 1);
-                this.rcsum[1] = addclip20(this.rcsum[1], rc1 >> 1, rc1 & 1);
-
-                if (slot != reg_slots - 1) {
-                    this.ram1[31][1] = suml;
-                    this.ram1[31][3] = sumr;
-                } else {
-                    this.accum_l = suml;
-                    this.accum_r = sumr;
-                }
-
-                if (key != 0 && this.nfs != 0) {
-                    ram2[7] &= (short) ~0xf020;
-                    ram2[7] |= (short) (((usenew || kon) ? newnibble : old_nibble) << 12);
-
-                    // update key
-                    ram2[7] |= (short) (key << 5);
-                }
-
-                if (!active) {
-                    if (this.nfs != 0) {
-                        ram1[1] = 0;
-                        ram1[3] = 0;
-                        ram1[5] = 0;
+                        this.accum_l = suml;
+                        this.accum_r = sumr;
                     }
 
-                    ram2[8] = 0;
-                    ram2[9] = 0;
-                    ram2[10] = 0;
+                    if (key != 0 && this.nfs != 0) {
+                        ram2[7] &= (short) ~0xf020;
+                        ram2[7] |= (short) (((usenew || kon) ? newnibble : old_nibble) << 12);
+
+                        // update key
+                        ram2[7] |= (short) (key << 5);
+                    }
+
+                    if (!active) {
+                        if (this.nfs != 0) {
+                            ram1[1] = 0;
+                            ram1[3] = 0;
+                            ram1[5] = 0;
+                        }
+
+                        ram2[8] = 0;
+                        ram2[9] = 0;
+                        ram2[10] = 0;
+                    }
                 }
-            }
 
             if (this.nfs != 0) {
                 this.ram2[31][7] |= 0x20;
@@ -2807,46 +2515,6 @@ class Pcm {
             int cycles_ = (reg_slots + 1) * 25;
 
             this.cycles += mcu.mcu_jv880 ? (cycles_ * 25) / 29 : cycles_;
-        }
-
-        // Profiling: accumulate time spent in this PCM_Update call
-        profVoiceLoopTime += System.nanoTime() - profStart;
-
-        // Diagnostic output every 2 seconds
-        long now = System.nanoTime();
-        if (now - diagLastReport >= 2_000_000_000L) {
-            if (diagSamples > 0) {
-                double avgActive = (double) diagActiveVoices / diagSamples;
-                double earlyExitPercent = 100.0 * diagEarlyExits / (diagEarlyExits + diagFullProcess);
-                int currentBits = Integer.bitCount(this.voice_mask & 0x0FFFFFFF);
-                long totalEnvChecks = diagEnvFrozen + diagEnvNotFrozen;
-                double frozenPercent = totalEnvChecks > 0 ? 100.0 * diagEnvFrozen / totalEnvChecks : 0;
-                long totalRomOps = diagRomReadsSkipped + diagRomReadsPerformed;
-                double romSkipPercent = totalRomOps > 0 ? 100.0 * diagRomReadsSkipped / totalRomOps : 0;
-                // Profiling: calculate microseconds per sample
-                double usPerSample = diagSamples > 0 ? (profVoiceLoopTime / 1000.0) / diagSamples : 0;
-                double targetUs = 1000000.0 / 66207;  // ~15.1 us per sample needed
-                System.out.printf("PCM_DIAG: samples=%d, avgActive=%.2f, mask=0x%08X (%d), set=%d, clear=%d, %.1fus/samp (need<%.1f)%n",
-                        diagSamples, avgActive, this.voice_mask, currentBits, voiceMaskSetCount, voiceMaskClearCount, usPerSample, targetUs);
-            }
-            diagActiveVoices = 0;
-            diagEarlyExits = 0;
-            diagFullProcess = 0;
-            diagSamples = 0;
-            voiceMaskSetCount = 0;
-            voiceMaskClearCount = 0;
-            diagEnvFrozen = 0;
-            diagEnvNotFrozen = 0;
-            diagEnvSilent = 0;
-            diagEnvSpeedZeroLowTarget = 0;
-            diagEnvSpeedNonZero = 0;
-            diagIrqFired = 0;
-            diagIrqAcked = 0;
-            diagIrqBlocked = 0;
-            diagRomReadsSkipped = 0;
-            diagRomReadsPerformed = 0;
-            profVoiceLoopTime = 0;  // Reset profiling counter
-            diagLastReport = now;
         }
     }
 }
