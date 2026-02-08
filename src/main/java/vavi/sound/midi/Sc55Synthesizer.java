@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.sound.midi.Instrument;
 import javax.sound.midi.MidiChannel;
 import javax.sound.midi.MidiDevice;
@@ -93,9 +94,16 @@ logger.log(Level.WARNING, "already open: " + hashCode());
             return;
         }
 
+        AtomicReference<Exception> exception = new AtomicReference<>();
+
         player = new Mcu();
         executor.submit(() -> {
-            player.run(new Config());
+            try {
+                player.run(new Config());
+            } catch (Exception e) {
+logger.log(Level.ERROR, e.getMessage(), e);
+                exception.set(e);
+            }
         });
 
         // Wait for emulator to be fully ready (ROM loading, audio setup, initial samples)
@@ -103,6 +111,8 @@ logger.log(Level.WARNING, "already open: " + hashCode());
         if (!player.waitForReady(5000)) {
             logger.log(Level.WARNING, "Emulator did not become ready within 5 seconds");
         }
+
+        if (exception.get() != null) throw new MidiUnavailableException(exception.get().getMessage());
 
         //
         isOpen = true;
@@ -114,8 +124,6 @@ logger.log(Level.WARNING, "already open: " + hashCode());
     /** when midi spi */
     private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r);
-        // Use NORM_PRIORITY instead of MIN_PRIORITY to prevent emulator falling behind
-        // MIN_PRIORITY caused voice accumulation issues when playing fast notes
         thread.setPriority(Thread.NORM_PRIORITY);
         return thread;
     });

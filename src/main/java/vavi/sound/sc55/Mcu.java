@@ -1860,10 +1860,10 @@ logger.log(Level.DEBUG, "thread end");
 
     /** */
     public void run(Config config) {
-        Path basePath = Path.of(System.getProperty("sc55.dir"));
+        Path basePath = Path.of(System.getProperty("sc55.dir", System.getProperty("user.dir")));
 
         if (!Files.exists(basePath))
-            logger.log(Level.WARNING, "Base path doesn't exist: " + basePath);
+            throw new IllegalStateException("Base path doesn't exist: " + basePath);
         else
             logger.log(Level.DEBUG, "Base path is: " + basePath);
 

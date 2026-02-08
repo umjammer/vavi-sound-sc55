@@ -124,7 +124,9 @@ class Pcm {
         private final long[] voiceFrozenCounter = new long[32];
         // ~50ms threshold (3300 samples at 66207 Hz) - forces faster voice release
         // Per plan file: this value worked to keep voices balanced
-        private static final long FROZEN_VOICE_THRESHOLD = 3300;
+        // TODO opus4.5 set 3300, it's not enough for normal midi
+        //      but 10 causes muddy note on "passport.mid"
+        private static final long FROZEN_VOICE_THRESHOLD = 3300 * 10;
 
         // Cached fast-path flag for ROM reads (set once at init)
         private boolean useFastRomRead = false;

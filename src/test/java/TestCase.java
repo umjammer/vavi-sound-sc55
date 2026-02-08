@@ -5,7 +5,6 @@
  */
 
 import java.io.IOException;
-import java.lang.System.Logger.Level;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.concurrent.CountDownLatch;
@@ -58,7 +57,7 @@ class TestCase {
     }
 
     @Property(name = "sc55.dir")
-    String baseDir;
+    String romDir;
 
     @Property
     String midi;
@@ -96,8 +95,8 @@ class TestCase {
             Util.bind(this);
         }
 
-        if (baseDir != null) {
-            System.setProperty("sc55.dir", baseDir);
+        if (romDir != null) {
+            System.setProperty("sc55.dir", romDir);
         }
 Debug.println("volume: " + volume + ", sc55.dir: " + System.getProperty("sc55.dir"));
     }

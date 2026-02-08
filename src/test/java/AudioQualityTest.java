@@ -17,6 +17,7 @@ import vavi.sound.sc55.Mcu;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+
 /**
  * Mathematical audio quality comparison test.
  * Compares Java emulator output with original C++ reference.
