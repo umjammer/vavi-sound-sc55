@@ -4,7 +4,7 @@
  * Programmed by Naohide Sano
  */
 
-package vavi.sound.midi;
+package vavi.sound.midi.sc55.pj;
 
 import java.io.InputStream;
 import java.lang.System.Logger;
@@ -31,7 +31,7 @@ import javax.sound.midi.SysexMessage;
 import javax.sound.midi.Transmitter;
 import javax.sound.midi.VoiceStatus;
 
-import vavi.sound.midi.Sc55Soundbank.Sc55Instrument;
+import vavi.sound.midi.sc55.pj.Sc55Soundbank.Sc55Instrument;
 import vavi.sound.sc55.Mcu;
 import vavi.sound.sc55.Mcu.Config;
 import vavi.util.StringUtil;
@@ -68,7 +68,7 @@ public class Sc55Synthesizer implements Synthesizer {
     private static final String version;
 
     /** the device information */
-    protected static final Info info =
+    public static final Info info =
         new Info("Nuked SC55 MIDI Synthesizer",
                             "vavi",
                             "Nuked Software synthesizer for SC55",

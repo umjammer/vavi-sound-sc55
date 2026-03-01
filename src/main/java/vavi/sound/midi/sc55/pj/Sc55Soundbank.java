@@ -4,7 +4,7 @@
  * Programmed by Naohide Sano
  */
 
-package vavi.sound.midi;
+package vavi.sound.midi.sc55.pj;
 
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
