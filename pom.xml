@@ -63,6 +63,53 @@
         </plugins>
       </build>
     </profile>
+
+    <profile>
+      <id>jextract</id>
+      <build>
+        <plugins>
+          <plugin>
+            <!-- mvn -P jextract jextract:sources@jep454 -->
+            <groupId>io.github.coffeelibs</groupId>
+            <artifactId>jextract-maven-plugin</artifactId>
+            <version>0.4.4</version>
+            <configuration>
+              <executable>/usr/local/jextract-25/bin/jextract</executable>
+              <headerSearchPaths>
+                <headerSearchPath>/opt/homebrew/include/SDL2</headerSearchPath>
+              </headerSearchPaths>
+            </configuration>
+            <executions>
+              <execution>
+                <id>jep454</id>
+                <phase>compile</phase>
+                <goals>
+                  <goal>sources</goal>
+                </goals>
+                <configuration>
+                  <headerFile>/usr/local/src/Nuked-SC55/src/mcu.h</headerFile>
+                  <libraries>
+                    <library>/usr/local/src/Nuked-SC55/libnuked-sc55.dylib</library>
+                  </libraries>
+                  <targetPackage>vavi.sound.midi.sc55.jep454</targetPackage>
+                  <headerClassName>Mcu</headerClassName>
+                  <includeFunctions>
+                    <includeFunction>SC55_run</includeFunction>
+                    <includeFunction>SC55_postUART</includeFunction>
+                  </includeFunctions>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+      <pluginRepositories>
+        <pluginRepository>
+          <id>jitpack.io</id>
+          <url>https://jitpack.io</url>
+        </pluginRepository>
+      </pluginRepositories>
+    </profile>
   </profiles>
 
   <build>

@@ -28,13 +28,33 @@ $ cp rom1.bin rom2.bin rom_sm.bin waverom1.nim waverom2.nim somewhere/roms/
 -Dsc55.dir=somewhere/roms
 ```
 
+### native library for jep454
+
+```shell
+$ cd Nuked-SC55
+$ patch -p 1 < .../vavi-sound-sc55/src/main/natuve/dynamiclib.patch
+$ mkdir build
+$ cd build
+$ cmake -G Ninja ..
+$ ls
+... libnuked-sc55.dylib  nuked-sc55
+```
+
 ## Usage
+
+### run standalone
 
 ```shell
 $ vi local.properties
 sc55.dir=somewhere/roms
 $ mvn -P run initialize antrun:run
 ```
+
+### jep454
+
+- [sample](src/test/java/vavi/sound/midi/sc55/jep454/Sc55SynthesizerTest.java)
+- environment variable `SC55ROM` ... rom location
+- system property `java.library.path` ... native library location
 
 ## References
 
@@ -55,6 +75,7 @@ $ mvn -P run initialize antrun:run
  * still has problem
    * `passport.mid` ... using high threshold `FROZEN_VOICE_THRESHOLD` make sound muddy
    * `Puyopuyo - 08 STICKER OF PUYOPUYO.mid` ... last fadeout part is weird
+   * use jep454 version
 
 ---
 
