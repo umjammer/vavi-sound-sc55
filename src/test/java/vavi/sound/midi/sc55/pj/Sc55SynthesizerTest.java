@@ -4,8 +4,13 @@
  * Programmed by Naohide Sano
  */
 
-package vavi.sound.midi;
+package vavi.sound.midi.sc55.pj;
 
+import java.io.BufferedInputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.concurrent.CountDownLatch;
 import javax.sound.midi.MetaEventListener;
 import javax.sound.midi.MidiSystem;
 import javax.sound.midi.Receiver;
@@ -13,29 +18,21 @@ import javax.sound.midi.Sequence;
 import javax.sound.midi.Sequencer;
 import javax.sound.midi.Synthesizer;
 
-import java.io.BufferedInputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.Random;
-import java.util.concurrent.CountDownLatch;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
+import vavi.util.Debug;
+import vavi.util.properties.annotation.Property;
+import vavi.util.properties.annotation.PropsEntity;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
-
-import vavi.util.Debug;
-import vavi.util.properties.annotation.Property;
-import vavi.util.properties.annotation.PropsEntity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static vavi.sound.midi.MidiUtil.volume;
 
 
 /**
- * Sc55SynthesizerTest.
+ * Pure Java Sc55SynthesizerTest.
  *
  * @author <a href="mailto:umjammer@gmail.com">Naohide Sano</a> (umjammer)
  * @version 0.00 2026/02/08 umjammer initial version <br>
@@ -82,7 +79,7 @@ Debug.println("volume: " + volume + ", sc55.dir: " + System.getProperty("sc55.di
     void test() throws Exception {
 Debug.println(midi);
 
-        Synthesizer synthesizer = new Sc55Synthesizer();
+        Synthesizer synthesizer = new vavi.sound.midi.sc55.pj.Sc55Synthesizer();
         synthesizer.open();
 Debug.println("synthesizer: " + synthesizer);
 
@@ -126,7 +123,7 @@ Debug.println("END");
 Debug.println(midi);
 
         Synthesizer synthesizer = MidiSystem.getSynthesizer();
-assertEquals(Sc55Synthesizer.class, synthesizer.getClass());
+assertEquals(vavi.sound.midi.sc55.pj.Sc55Synthesizer.class, synthesizer.getClass());
         synthesizer.open();
 Debug.println("synthesizer: " + synthesizer);
 

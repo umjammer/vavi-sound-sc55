@@ -20,7 +20,7 @@ import javax.sound.midi.SysexMessage;
 import javax.sound.midi.Transmitter;
 
 import vavi.sound.midi.MidiUtil.MidiMatcher;
-import vavi.sound.midi.Sc55Synthesizer;
+import vavi.sound.midi.sc55.pj.Sc55Synthesizer;
 import vavi.sound.sc55.Mcu;
 import vavi.util.Debug;
 import vavi.util.StringUtil;

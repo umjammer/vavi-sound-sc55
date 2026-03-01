@@ -1,0 +1,187 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index aac359e..3265e11 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -211,37 +211,44 @@ endif()
+ add_executable(nuked-sc55 ${SC55_SRC} ${UTF8MAIN_SRCS})
+ set_nopie(nuked-sc55)
+ 
+-if(MSVC)
+-    target_compile_definitions(nuked-sc55 PRIVATE WIN32_CONSOLE)
+-endif()
++add_library(nuked-sc55-shared SHARED ${SC55_SRC} ${UTF8MAIN_SRCS})
++set_target_properties(nuked-sc55-shared PROPERTIES OUTPUT_NAME nuked-sc55)
++target_compile_definitions(nuked-sc55-shared PRIVATE NUKED_SC55_SHARED)
+ 
+-if(TARGET SDL2::SDL2)
+-    target_link_libraries(nuked-sc55 PRIVATE SDL2::SDL2)
+-else()
+-    string(STRIP ${SDL2_LIBRARIES} SDL2_LIBRARIES)
+-    target_include_directories(nuked-sc55 PRIVATE ${SDL2_INCLUDE_DIRS})
+-    target_link_libraries(nuked-sc55 PRIVATE ${SDL2_LIBRARIES})
+-endif()
++foreach(target nuked-sc55 nuked-sc55-shared)
++    if(MSVC)
++        target_compile_definitions(${target} PRIVATE WIN32_CONSOLE)
++    endif()
+ 
+-if(USE_RTMIDI)
+-    if(USE_SYSTEM_RTMIDI)
+-        target_compile_options(nuked-sc55 PRIVATE ${SYSTEM_RTMIDI_CFLAGS})
+-        target_include_directories(nuked-sc55 PRIVATE ${SYSTEM_RTMIDI_INCLUDE_DIRS})
+-        target_link_libraries(nuked-sc55 PRIVATE ${SYSTEM_RTMIDI_LIBRARIES})
++    if(TARGET SDL2::SDL2)
++        target_link_libraries(${target} PRIVATE SDL2::SDL2)
+     else()
+-        target_link_libraries(nuked-sc55 PRIVATE RtMidi)
++        string(STRIP ${SDL2_LIBRARIES} SDL2_LIBRARIES)
++        target_include_directories(${target} PRIVATE ${SDL2_INCLUDE_DIRS})
++        target_link_libraries(${target} PRIVATE ${SDL2_LIBRARIES})
+     endif()
+-endif()
+ 
+-if(WIN32)
+-    target_link_libraries(nuked-sc55 PRIVATE shlwapi winmm)
+-endif()
++    if(USE_RTMIDI)
++        if(USE_SYSTEM_RTMIDI)
++            target_compile_options(${target} PRIVATE ${SYSTEM_RTMIDI_CFLAGS})
++            target_include_directories(${target} PRIVATE ${SYSTEM_RTMIDI_INCLUDE_DIRS})
++            target_link_libraries(${target} PRIVATE ${SYSTEM_RTMIDI_LIBRARIES})
++        else()
++            target_link_libraries(${target} PRIVATE RtMidi)
++        endif()
++    endif()
++
++    if(WIN32)
++        target_link_libraries(${target} PRIVATE shlwapi winmm)
++    endif()
++
++    if(APPLE)
++        find_library(LIBCoreAudio CoreAudio)
++        target_link_libraries(${target} PRIVATE ${LIBCoreAudio})
++    endif()
+ 
+-if(APPLE)
+-    find_library(LIBCoreAudio CoreAudio)
+-    target_link_libraries(nuked-sc55 PRIVATE ${LIBCoreAudio})
+-endif()
+ 
++endforeach()
+ 
+ set(SC55_INSTALL_FILES)
+ 
+@@ -260,7 +267,7 @@ endmacro()
+ 
+ copy_rom_target(back_data back.data)
+ 
+-install(TARGETS nuked-sc55
++install(TARGETS nuked-sc55 nuked-sc55-shared
+         EXPORT NukedSC55StaticTargets
+         RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+         LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+diff --git a/src/mcu.cpp b/src/mcu.cpp
+index 71e7040..3ebcce8 100644
+--- a/src/mcu.cpp
++++ b/src/mcu.cpp
+@@ -1371,7 +1371,28 @@ void MIDI_Reset(ResetType resetType)
+ 
+ }
+ 
++
++#ifdef NUKED_SC55_SHARED
++extern "C" {
++#ifdef _WIN32
++__declspec(dllexport)
++#else
++__attribute__((visibility("default")))
++#endif
++void SC55_postUART(uint8_t data) {
++    MCU_PostUART(data);
++}
++}
++
++#ifdef _WIN32
++extern "C" __declspec(dllexport) int SC55_run(int argc, char *argv[])
++#else
++extern "C" __attribute__((visibility("default"))) int SC55_run(int argc, char *argv[])
++#endif
++#else
+ int main(int argc, char *argv[])
++#endif
++
+ {
+     (void)argc;
+     std::string basePath;
+@@ -1757,11 +1778,13 @@ int main(int argc, char *argv[])
+         return 2;
+     }
+ 
++#ifndef NUKED_SC55_SHARED
+     if(!MIDI_Init(port))
+     {
+         fprintf(stderr, "ERROR: Failed to initialize the MIDI Input.\nWARNING: Continuing without MIDI Input...\n");
+         fflush(stderr);
+     }
++#endif
+ 
+     LCD_Init();
+     MCU_Init();
+@@ -1770,12 +1793,16 @@ int main(int argc, char *argv[])
+     SM_Reset();
+     PCM_Reset();
+ 
++#ifndef NUKED_SC55_SHARED
+     if (resetType != ResetType::NONE) MIDI_Reset(resetType);
++#endif
+     
+     MCU_Run();
+ 
+     MCU_CloseAudio();
++#ifndef NUKED_SC55_SHARED
+     MIDI_Quit();
++#endif
+     LCD_UnInit();
+     SDL_Quit();
+ 
+diff --git a/src/mcu.h b/src/mcu.h
+index da5f535..90e6fa4 100644
+--- a/src/mcu.h
++++ b/src/mcu.h
+@@ -189,7 +189,7 @@ struct mcu_t {
+ int CC;
+ };
+ 
+-extern mcu_t mcu;
++extern struct mcu_t mcu;
+ 
+ void MCU_ErrorTrap(void);
+ 
+@@ -459,7 +459,7 @@ extern SDL_atomic_t mcu_button_pressed;
+ static const uint32_t uart_buffer_size = 8192;
+ extern uint32_t uart_write_ptr;
+ extern uint32_t uart_read_ptr;
+-extern uint8_t uart_buffer[uart_buffer_size];
++extern uint8_t uart_buffer[8192];
+ 
+ uint8_t MCU_ReadP0(void);
+ uint8_t MCU_ReadP1(void);
+@@ -474,3 +474,18 @@ void MCU_PostUART(uint8_t data);
+ 
+ void MCU_WorkThread_Lock(void);
+ void MCU_WorkThread_Unlock(void);
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#ifdef _WIN32
++__declspec(dllexport) void SC55_postUART(uint8_t data);
++__declspec(dllexport) int SC55_run(int argc, char *argv[]);
++#else
++__attribute__((visibility("default"))) void SC55_postUART(uint8_t data);
++__attribute__((visibility("default"))) int SC55_run(int argc, char *argv[]);
++#endif
++
++#ifdef __cplusplus
++}
++#endif

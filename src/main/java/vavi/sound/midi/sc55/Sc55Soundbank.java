@@ -4,7 +4,7 @@
  * Programmed by Naohide Sano
  */
 
-package vavi.sound.midi;
+package vavi.sound.midi.sc55;
 
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
@@ -16,6 +16,8 @@ import javax.sound.midi.Soundbank;
 import javax.sound.midi.SoundbankResource;
 import com.sun.media.sound.ModelPatch;
 import com.sun.media.sound.SimpleInstrument;
+
+import vavi.sound.midi.sc55.pj.Sc55Synthesizer;
 
 import static java.lang.System.getLogger;
 
