@@ -9,9 +9,8 @@ package vavi.sound.midi.sc55;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import javax.sound.midi.MidiDevice;
+import javax.sound.midi.Synthesizer;
 import javax.sound.midi.spi.MidiDeviceProvider;
-
-import vavi.sound.midi.sc55.pj.Sc55Synthesizer;
 
 import static java.lang.System.getLogger;
 
@@ -30,21 +29,27 @@ public class Sc55MidiDeviceProvider extends MidiDeviceProvider {
     public final static int MANUFACTURER_ID = 0x41;
 
     /** */
-    private static final MidiDevice.Info[] infos = new MidiDevice.Info[] { Sc55Synthesizer.info };
+    private static final MidiDevice.Info[] infos = new MidiDevice.Info[] {
+            vavi.sound.midi.sc55.pj.Sc55Synthesizer.info,
+            vavi.sound.midi.sc55.jep454.Sc55Synthesizer.info
+    };
 
     @Override
     public MidiDevice.Info[] getDeviceInfo() {
         return infos;
     }
 
-    /** */
     @Override
     public MidiDevice getDevice(MidiDevice.Info info)
         throws IllegalArgumentException {
 
-        if (info == Sc55Synthesizer.info) {
+        if (info == vavi.sound.midi.sc55.pj.Sc55Synthesizer.info) {
 logger.log(Level.DEBUG, "★1 info: " + info);
-            Sc55Synthesizer synthesizer = new Sc55Synthesizer();
+            Synthesizer synthesizer = new vavi.sound.midi.sc55.pj.Sc55Synthesizer();
+            return synthesizer;
+        } if (info == vavi.sound.midi.sc55.jep454.Sc55Synthesizer.info) {
+logger.log(Level.DEBUG, "★1 info: " + info);
+            Synthesizer synthesizer = new vavi.sound.midi.sc55.jep454.Sc55Synthesizer();
             return synthesizer;
         } else {
 logger.log(Level.DEBUG, "★1 here: " + info);

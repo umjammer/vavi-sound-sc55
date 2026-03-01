@@ -4,11 +4,14 @@
  * Programmed by Naohide Sano
  */
 
-package vavi.sound.midi.sc55.pj;
+package vavi.sound.midi.sc55.jep454;
 
 import java.io.InputStream;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -32,15 +35,17 @@ import javax.sound.midi.Transmitter;
 import javax.sound.midi.VoiceStatus;
 
 import vavi.sound.midi.sc55.Sc55Soundbank.Sc55Instrument;
-import vavi.sound.sc55.Mcu;
-import vavi.sound.sc55.Mcu.Config;
+import vavi.sound.sc55.jep454.Mcu;
 import vavi.util.StringUtil;
 
 import static java.lang.System.getLogger;
 
 
 /**
- * Sc55Synthesizer.
+ * JEP454 version SC-55 Synthesizer.
+ * <p>
+ * env
+ * <li>{@code SC55ROM} ... rom dir</li>
  *
  * @author <a href="mailto:umjammer@gmail.com">Naohide Sano</a> (umjammer)
  * @version 0.00 2025/03/12 umjammer initial version <br>
@@ -69,16 +74,14 @@ public class Sc55Synthesizer implements Synthesizer {
 
     /** the device information */
     public static final Info info =
-        new Info("Nuked SC55 MIDI Synthesizer",
+        new Info("JEP454 Nuked SC55 MIDI Synthesizer",
                             "vavi",
-                            "Nuked Software synthesizer for SC55",
+                            "JEP454 Nuked Software synthesizer for SC55",
                             "Version " + version) {};
 
     private long timestamp;
 
     private boolean isOpen;
-
-    private Mcu player;
 
     // ----
 
@@ -96,21 +99,22 @@ logger.log(Level.WARNING, "already open: " + hashCode());
 
         AtomicReference<Exception> exception = new AtomicReference<>();
 
-        player = new Mcu();
         executor.submit(() -> {
-            try {
-                player.run(new Config());
-            } catch (Exception e) {
+            try (Arena arena = Arena.ofConfined()) {
+                Mcu.setenv(arena.allocateFrom("SDL_VIDEODRIVER"), arena.allocateFrom("dummy"), 1);
+                String[] args = {"sc55", "-mk2", "-p:1"}; // TODO make machine type changeable
+                MemorySegment argv = arena.allocate(ValueLayout.ADDRESS, args.length);
+                for (int i = 0; i < args.length; i++) {
+                    argv.setAtIndex(ValueLayout.ADDRESS, i, arena.allocateFrom(args[i]));
+                }
+                Mcu.SC55_run(args.length, argv);
+            } catch (Throwable e) {
 logger.log(Level.ERROR, e.getMessage(), e);
-                exception.set(e);
+                exception.set(e instanceof Exception ? (Exception) e : new Exception(e));
             }
         });
 
-        // Wait for emulator to be fully ready (ROM loading, audio setup, initial samples)
-        // This ensures MIDI messages aren't sent before the emulator can process them
-        if (!player.waitForReady(5000)) {
-            logger.log(Level.WARNING, "Emulator did not become ready within 5 seconds");
-        }
+        try { Thread.sleep(2000); } catch (InterruptedException ignore) {}
 
         if (exception.get() != null) throw new MidiUnavailableException(exception.get().getMessage());
 
@@ -282,15 +286,15 @@ logger.log(Level.TRACE, "[%d] ev: %d, ch: %d, p1: %d, p2: %d".formatted(timeStam
                              ShortMessage.CONTROL_CHANGE,
                              ShortMessage.PITCH_BEND -> {
 
-                            player.MCU_PostUART((byte) (command | channel));
-                            player.MCU_PostUART((byte) data1);
-                            player.MCU_PostUART((byte) data2);
+                            Mcu.SC55_postUART((byte) (command | channel));
+                            Mcu.SC55_postUART((byte) data1);
+                            Mcu.SC55_postUART((byte) data2);
                         }
                         case ShortMessage.PROGRAM_CHANGE,
                              ShortMessage.CHANNEL_PRESSURE -> {
 
-                            player.MCU_PostUART((byte) (command | channel));
-                            player.MCU_PostUART((byte) data1);
+                            Mcu.SC55_postUART((byte) (command | channel));
+                            Mcu.SC55_postUART((byte) data1);
                         }
                     }
                 }
@@ -309,7 +313,7 @@ logger.log(Level.DEBUG, "sysex volume: gain: %3.0f".formatted(gain * 127));
                         }
                     }
                     for (byte b : data) {
-                        player.MCU_PostUART(b);
+                        Mcu.SC55_postUART(b);
                     }
                 }
                 default -> {}
