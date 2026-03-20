@@ -6,7 +6,6 @@
 
 package vavi.sound.midi.sc55.jep454;
 
-import java.io.InputStream;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.lang.foreign.Arena;
@@ -15,7 +14,6 @@ import java.lang.foreign.ValueLayout;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
@@ -39,6 +37,7 @@ import vavi.sound.sc55.jep454.Mcu;
 import vavi.util.StringUtil;
 
 import static java.lang.System.getLogger;
+import static vavi.sound.midi.sc55.Sc55MidiDeviceProvider.version;
 
 
 /**
@@ -53,24 +52,6 @@ import static java.lang.System.getLogger;
 public class Sc55Synthesizer implements Synthesizer {
 
     private static final Logger logger = getLogger(Sc55Synthesizer.class.getName());
-
-    static {
-        try {
-            try (InputStream is = Sc55Synthesizer.class.getResourceAsStream("/META-INF/maven/vavi/vavi-sound-sc55/pom.properties")) {
-                if (is != null) {
-                    Properties props = new Properties();
-                    props.load(is);
-                    version = props.getProperty("version", "undefined in pom.properties");
-                } else {
-                    version = System.getProperty("vavi.test.version", "undefined");
-                }
-            }
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
-
-    private static final String version;
 
     /** the device information */
     public static final Info info =
