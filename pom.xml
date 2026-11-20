@@ -138,7 +138,6 @@
         <configuration>
           <argLine>
             --add-exports java.desktop/com.sun.media.sound=ALL-UNNAMED
-            --add-modules jdk.incubator.vector
             -Djava.util.logging.config.file=${project.build.testOutputDirectory}/logging.properties
             -Dswing.defaultlaf=com.formdev.flatlaf.FlatLightLaf
           </argLine>

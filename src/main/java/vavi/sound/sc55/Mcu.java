@@ -590,6 +590,9 @@ public class Mcu {
         this.audioCaptureCallback = callback;
     }
 
+    /** when set, samples are passed to this instead of the audio buffer (for offline rendering) */
+    AudioCaptureCallback offlineSink;
+
     void MCU_ErrorTrap() {
         logger.log(Level.DEBUG, "cp: %2x pc: %4x".formatted(this.cp & 0xff, this.pc & 0xffff), new Exception("MCU_ErrorTrap"));
     }
@@ -1373,10 +1376,6 @@ logger.log(Level.TRACE, "mutex lock");
 logger.log(Level.TRACE, "mutex unlock");
     }
 
-    // Batch size for MCU instruction execution
-    // Larger = less overhead, but more latency. 64 instructions ≈ 1 PCM sample.
-    private static final int MCU_BATCH_SIZE = 1;  // Must be 1 to match C++ timing exactly
-
     void work_thread() {
 logger.log(Level.DEBUG, "task start: ex_ignore: " + ex_ignore + ", sleep: " + sleep);
 try {
@@ -1409,55 +1408,12 @@ try {
                 MCU_WorkThread_Lock();
             }
 
-            // === BATCH EXECUTION: Run MCU instructions in tight loop ===
-            // This reduces per-iteration overhead (atomic ops, method calls, condition checks)
-            for (int batch = 0; batch < MCU_BATCH_SIZE && work_thread_run; batch++) {
-                if (!this.ex_ignore)
-                    interrupt.MCU_Interrupt_Handle();
-                else
-                    this.ex_ignore = false;
-
-                if (!this.sleep)
-                    MCU_ReadInstruction();
-
-                this.cycles += 12;
-            }
-
-            // === SUBSYSTEM UPDATES: Called once per batch ===
-            // PCM, Timer, SM will process all accumulated cycles at once
-            if (pcm.cycles < this.cycles)
-                pcm.PCM_Update(this.cycles);
+            step();
 
             // Mark emulator as ready after processing enough samples
             if (!emulatorReady && pcm.getTotalSamples() >= READY_SAMPLE_THRESHOLD) {
                 emulatorReady = true;
                 logger.log(Level.INFO, "Emulator ready after " + pcm.getTotalSamples() + " samples");
-            }
-
-            if (timer.timer_cycles * 2 < this.cycles)
-                timer.TIMER_Clock(this.cycles);
-
-            if (!mcu_mk1 && !mcu_jv880 && !mcu_scb55) {
-                if (sm.cycles < this.cycles * 5) {
-                    sm.SM_Update(this.cycles);
-                }
-            } else {
-                MCU_UpdateUART_RX();
-                MCU_UpdateUART_TX();
-            }
-
-            if ((dev_register[Dev.DEV_ADCSR.v] & 0x20) != 0)
-                MCU_UpdateAnalog(this.cycles);
-
-            if (mcu_mk1) {
-                if (ga_lcd_counter != 0) {
-                    ga_lcd_counter -= MCU_BATCH_SIZE;
-                    if (ga_lcd_counter <= 0) {
-                        ga_lcd_counter = 0;
-                        MCU_GA_SetGAInt(1, false);
-                        MCU_GA_SetGAInt(1, true);
-                    }
-                }
             }
         }
 
@@ -1467,6 +1423,51 @@ logger.log(Level.DEBUG, "task end");
  logger.log(Level.ERROR, t.getMessage(), t);
  throw t;
 }
+    }
+
+    /** initializes and resets all the units */
+    void reset() {
+        this.MCU_Init();
+        this.MCU_PatchROM();
+        this.MCU_Reset();
+        this.sm.SM_Reset();
+        this.pcm.PCM_Reset();
+    }
+
+    /** one iteration of the emulation loop, same as the body of C++ work_thread() */
+    void step() {
+        if (!this.ex_ignore)
+            interrupt.MCU_Interrupt_Handle();
+        else
+            this.ex_ignore = false;
+
+        if (!this.sleep)
+            MCU_ReadInstruction();
+
+        this.cycles += 12; // FIXME: assume 12 cycles per instruction
+
+        pcm.PCM_Update(this.cycles);
+
+        timer.TIMER_Clock(this.cycles);
+
+        if (!mcu_mk1 && !mcu_jv880 && !mcu_scb55)
+            sm.SM_Update(this.cycles);
+        else {
+            MCU_UpdateUART_RX();
+            MCU_UpdateUART_TX();
+        }
+
+        MCU_UpdateAnalog(this.cycles);
+
+        if (mcu_mk1) {
+            if (ga_lcd_counter != 0) {
+                ga_lcd_counter--;
+                if (ga_lcd_counter == 0) {
+                    MCU_GA_SetGAInt(1, false);
+                    MCU_GA_SetGAInt(1, true);
+                }
+            }
+        }
     }
 
     private void MCU_Run() {
@@ -1696,6 +1697,10 @@ logger.log(Level.DEBUG, "thread end");
             sample[1] = Short.MIN_VALUE;
         // Cache write pointer to reduce atomic operations (3 gets -> 1 get)
         int wp = sample_write_ptr.get();
+        if (offlineSink != null) {
+            offlineSink.onSamples((short) sample[0], (short) sample[1]);
+            return;
+        }
         sample_buffer[wp] = (short) sample[0];
         sample_buffer[wp + 1] = (short) sample[1];
         sample_write_ptr.set((wp + 2) % audio_buffer_size);
@@ -1858,8 +1863,8 @@ logger.log(Level.DEBUG, "thread end");
         mcu.run(config);
     }
 
-    /** */
-    public void run(Config config) {
+    /** loads roms */
+    boolean loadRoms(Config config) {
         Path basePath = Path.of(System.getProperty("sc55.dir", System.getProperty("user.dir")));
 
         if (!Files.exists(basePath))
@@ -1952,7 +1957,7 @@ logger.log(Level.DEBUG, "thread end");
         if (!r_ok) {
             logger.log(Level.ERROR, "FATAL ERROR: One of required data ROM files is missing: " + errors_list);
             this.closeAllR();
-            return;
+            return false;
         }
 
 //        this.lcd.LCD_SetBackPath(basePath + "/back.data");
@@ -1965,7 +1970,7 @@ logger.log(Level.DEBUG, "thread end");
             logger.log(Level.ERROR, e.getMessage());
             logger.log(Level.ERROR, "FATAL ERROR: Failed to read the mcu ROM1.");
             this.closeAllR();
-            return;
+            return false;
         }
 
         try {
@@ -1978,7 +1983,7 @@ logger.log(Level.DEBUG, "thread end");
         } catch (IOException e) {
             logger.log(Level.ERROR, "FATAL ERROR: Failed to read the mcu ROM2.");
             this.closeAllR();
-            return;
+            return false;
         }
 
         if (this.mcu_mk1) {
@@ -1989,7 +1994,7 @@ logger.log(Level.DEBUG, "thread end");
             } catch (IOException e) {
                 logger.log(Level.ERROR, "FATAL ERROR: Failed to read the WaveRom1.");
                 this.closeAllR();
-                return;
+                return false;
             }
 
             this.unscramble(this.tempbuf, this.pcm.waverom1, 0x100000);
@@ -2001,7 +2006,7 @@ logger.log(Level.DEBUG, "thread end");
             } catch (IOException e) {
                 logger.log(Level.ERROR, "FATAL ERROR: Failed to read the WaveRom2.");
                 this.closeAllR();
-                return;
+                return false;
             }
 
             this.unscramble(this.tempbuf, this.pcm.waverom2, 0x100000);
@@ -2013,7 +2018,7 @@ logger.log(Level.DEBUG, "thread end");
             } catch (IOException e) {
                 logger.log(Level.ERROR, "FATAL ERROR: Failed to read the WaveRom3.");
                 this.closeAllR();
-                return;
+                return false;
             }
 
             this.unscramble(this.tempbuf, this.pcm.waverom3, 0x100000);
@@ -2025,7 +2030,7 @@ logger.log(Level.DEBUG, "thread end");
             } catch (IOException e) {
                 logger.log(Level.ERROR, "FATAL ERROR: Failed to read the WaveRom1.");
                 this.closeAllR();
-                return;
+                return false;
             }
 
             this.unscramble(this.tempbuf, this.pcm.waverom1, 0x200000);
@@ -2037,7 +2042,7 @@ logger.log(Level.DEBUG, "thread end");
             } catch (IOException e) {
                 logger.log(Level.ERROR, "FATAL ERROR: Failed to read the WaveRom2.");
                 this.closeAllR();
-                return;
+                return false;
             }
 
             this.unscramble(this.tempbuf, this.pcm.waverom2, 0x200000);
@@ -2071,7 +2076,7 @@ logger.log(Level.DEBUG, "thread end");
             } catch (IOException e) {
                 logger.log(Level.ERROR, "FATAL ERROR: Failed to read the WaveRom1.");
                 this.closeAllR();
-                return;
+                return false;
             }
 
             this.unscramble(this.tempbuf, this.pcm.waverom1, 0x200000);
@@ -2085,7 +2090,7 @@ logger.log(Level.DEBUG, "thread end");
             } catch (IOException e) {
                 logger.log(Level.ERROR, "FATAL ERROR: Failed to read the WaveRom2.");
                 this.closeAllR();
-                return;
+                return false;
             }
 
             this.unscramble(this.tempbuf, this.mcu_scb55 ? this.pcm.waverom3 : this.pcm.waverom2, 0x100000);
@@ -2100,11 +2105,18 @@ logger.log(Level.DEBUG, "thread end");
         } catch (IOException e) {
             logger.log(Level.ERROR, "FATAL ERROR: Failed to read the sub mcu ROM.");
             this.closeAllR();
-            return;
+            return false;
         }
 
         // Close all files as they no longer needed being open
         this.closeAllR();
+        return true;
+    }
+
+    /** */
+    public void run(Config config) {
+        if (!loadRoms(config))
+            return;
 
         if (this.MCU_OpenAudio(config.audioDeviceIndex, config.pageSize, config.pageNum) == 0) {
             logger.log(Level.ERROR, "FATAL ERROR: Failed to open the audio stream.");
@@ -2116,11 +2128,7 @@ logger.log(Level.DEBUG, "thread end");
         }
 
         this.lcd.LCD_Init();
-        this.MCU_Init();
-        this.MCU_PatchROM();
-        this.MCU_Reset();
-        this.sm.SM_Reset();
-        this.pcm.PCM_Reset();
+        this.reset();
 
         if (config.resetType != ResetType.NONE)
             this.MIDI_Reset(config.resetType);
