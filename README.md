@@ -31,13 +31,21 @@ $ cp rom1.bin rom2.bin rom_sm.bin waverom1.nim waverom2.nim somewhere/roms/
 ### native library for jep454
 
 ```shell
+$ git clone https://github.com/nukeykt/Nuked-SC55.git
 $ cd Nuked-SC55
-$ patch -p 1 < .../vavi-sound-sc55/src/main/natuve/dynamiclib.patch
+$ git -C .../Nuked-SC55 apply .../vavi-sound-sc55/src/main/native/dynamiclib.patch
 $ mkdir build
 $ cd build
 $ cmake -G Ninja ..
 $ ls
 ... libnuked-sc55.dylib  nuked-sc55
+$ nm libnuked-sc55.dylib | grep SC55_                                                                                                                                                                      vavi
+000000000000587c T _SC55_getSampleRate
+000000000000582c T _SC55_isReady
+0000000000005808 T _SC55_postUART
+0000000000005a48 T _SC55_quit
+00000000000058d4 T _SC55_readSamples
+0000000000005a58 T _SC55_run
 ```
 
 ## Usage
@@ -70,16 +78,18 @@ $ mvn -P run initialize antrun:run
 
 ## TODO
 
- * headless mode
+ * pure java
+   * headless mode
+   * still has problem
+     * ~~`passport.mid` ... using high threshold `FROZEN_VOICE_THRESHOLD` make sound muddy~~
+     * ~~`Puyopuyo - 08 STICKER OF PUYOPUYO.mid` ... last fadeout part is weird~~
+     * ~~use jep454 version~~ mostly the same
  * soundbank
- * still has problem
-   * `passport.mid` ... using high threshold `FROZEN_VOICE_THRESHOLD` make sound muddy
-   * `Puyopuyo - 08 STICKER OF PUYOPUYO.mid` ... last fadeout part is weird
-   * use jep454 version
+ * jep454 sound output is core-audio, get buffer instead of.
 
 ---
 
-# Original
+# [Original](https://github.com/nukeykt/Nuked-SC55)
 
 Roland SC-55 emulator, by nukeykt.
 
