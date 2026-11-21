@@ -6,8 +6,10 @@
 
 package vavi.sound.midi.sc55;
 
+import java.io.InputStream;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
+import java.util.Properties;
 import javax.sound.midi.MidiDevice;
 import javax.sound.midi.Synthesizer;
 import javax.sound.midi.spi.MidiDeviceProvider;
@@ -25,18 +27,33 @@ public class Sc55MidiDeviceProvider extends MidiDeviceProvider {
 
     private static final Logger logger = getLogger(Sc55MidiDeviceProvider.class.getName());
 
+    static {
+        try {
+            try (InputStream is = Sc55MidiDeviceProvider.class.getResourceAsStream("/META-INF/maven/vavi/vavi-sound-sc55/pom.properties")) {
+                if (is != null) {
+                    Properties props = new Properties();
+                    props.load(is);
+                    version = props.getProperty("version", "undefined in pom.properties");
+                } else {
+                    version = System.getProperty("vavi.test.version", "undefined");
+                }
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    public static final String version;
+
     /** Roland */
     public final static int MANUFACTURER_ID = 0x41;
 
-    /** */
-    private static final MidiDevice.Info[] infos = new MidiDevice.Info[] {
-            vavi.sound.midi.sc55.pj.Sc55Synthesizer.info,
-            vavi.sound.midi.sc55.jep454.Sc55Synthesizer.info
-    };
-
     @Override
     public MidiDevice.Info[] getDeviceInfo() {
-        return infos;
+        return new MidiDevice.Info[] {
+                vavi.sound.midi.sc55.pj.Sc55Synthesizer.info,
+                vavi.sound.midi.sc55.jep454.Sc55Synthesizer.info
+        };
     }
 
     @Override

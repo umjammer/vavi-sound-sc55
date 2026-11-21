@@ -166,4 +166,124 @@ public class Mcu extends Mcu$shared {
            throw new AssertionError("should not reach here", ex$);
         }
     }
+
+    private static class SC55_isReady {
+        public static final FunctionDescriptor DESC = FunctionDescriptor.of(
+            Mcu.C_INT
+        );
+
+        public static final MemorySegment ADDR = SYMBOL_LOOKUP.findOrThrow("SC55_isReady");
+
+        public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
+    }
+
+    /**
+     * {@snippet lang=c :
+     * int SC55_isReady(void)
+     * }
+     */
+    public static int SC55_isReady() {
+        var mh$ = SC55_isReady.HANDLE;
+        try {
+            if (TRACE_DOWNCALLS) {
+                traceDowncall("SC55_isReady");
+            }
+            return (int)mh$.invokeExact();
+        } catch (Error | RuntimeException ex) {
+           throw ex;
+        } catch (Throwable ex$) {
+           throw new AssertionError("should not reach here", ex$);
+        }
+    }
+
+    private static class SC55_getSampleRate {
+        public static final FunctionDescriptor DESC = FunctionDescriptor.of(
+            Mcu.C_INT
+        );
+
+        public static final MemorySegment ADDR = SYMBOL_LOOKUP.findOrThrow("SC55_getSampleRate");
+
+        public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
+    }
+
+    /**
+     * {@snippet lang=c :
+     * int SC55_getSampleRate(void)
+     * }
+     */
+    public static int SC55_getSampleRate() {
+        var mh$ = SC55_getSampleRate.HANDLE;
+        try {
+            if (TRACE_DOWNCALLS) {
+                traceDowncall("SC55_getSampleRate");
+            }
+            return (int)mh$.invokeExact();
+        } catch (Error | RuntimeException ex) {
+           throw ex;
+        } catch (Throwable ex$) {
+           throw new AssertionError("should not reach here", ex$);
+        }
+    }
+
+    private static class SC55_readSamples {
+        public static final FunctionDescriptor DESC = FunctionDescriptor.of(
+            Mcu.C_INT,
+            Mcu.C_POINTER,
+            Mcu.C_INT
+        );
+
+        public static final MemorySegment ADDR = SYMBOL_LOOKUP.findOrThrow("SC55_readSamples");
+
+        /** critical: just a memcpy, no upcalls, so heap segments (e.g. {@code MemorySegment.ofArray(short[])}) are allowed */
+        public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC, Linker.Option.critical(true));
+    }
+
+    /**
+     * Copies {@code len} int16 samples (interleaved stereo L/R) into {@code buf}.
+     * {@snippet lang=c :
+     * int SC55_readSamples(int16_t *buf, int len)
+     * }
+     * @return the number of samples copied, 0 when the emulator is not running
+     */
+    public static int SC55_readSamples(MemorySegment buf, int len) {
+        var mh$ = SC55_readSamples.HANDLE;
+        try {
+            if (TRACE_DOWNCALLS) {
+                traceDowncall("SC55_readSamples", buf, len);
+            }
+            return (int)mh$.invokeExact(buf, len);
+        } catch (Error | RuntimeException ex) {
+           throw ex;
+        } catch (Throwable ex$) {
+           throw new AssertionError("should not reach here", ex$);
+        }
+    }
+
+    private static class SC55_quit {
+        public static final FunctionDescriptor DESC = FunctionDescriptor.ofVoid();
+
+        public static final MemorySegment ADDR = SYMBOL_LOOKUP.findOrThrow("SC55_quit");
+
+        public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
+    }
+
+    /**
+     * Makes {@link #SC55_run(int, MemorySegment)} return.
+     * {@snippet lang=c :
+     * void SC55_quit(void)
+     * }
+     */
+    public static void SC55_quit() {
+        var mh$ = SC55_quit.HANDLE;
+        try {
+            if (TRACE_DOWNCALLS) {
+                traceDowncall("SC55_quit");
+            }
+            mh$.invokeExact();
+        } catch (Error | RuntimeException ex) {
+           throw ex;
+        } catch (Throwable ex$) {
+           throw new AssertionError("should not reach here", ex$);
+        }
+    }
 }
