@@ -11,11 +11,14 @@ import java.lang.System.Logger.Level;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.sound.midi.Instrument;
 import javax.sound.midi.MidiChannel;
@@ -31,6 +34,10 @@ import javax.sound.midi.Synthesizer;
 import javax.sound.midi.SysexMessage;
 import javax.sound.midi.Transmitter;
 import javax.sound.midi.VoiceStatus;
+import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.LineUnavailableException;
+import javax.sound.sampled.SourceDataLine;
 
 import vavi.sound.midi.sc55.Sc55Soundbank.Sc55Instrument;
 import vavi.sound.sc55.jep454.Mcu;
@@ -42,6 +49,9 @@ import static vavi.sound.midi.sc55.Sc55MidiDeviceProvider.version;
 
 /**
  * JEP454 version SC-55 Synthesizer.
+ * <p>
+ * the native library does not open any audio device, sound is pulled
+ * by {@code SC55_readSamples()} and written to a java sound {@link SourceDataLine}.
  * <p>
  * env
  * <li>{@code SC55ROM} ... rom dir</li>
@@ -80,7 +90,7 @@ logger.log(Level.WARNING, "already open: " + hashCode());
 
         AtomicReference<Exception> exception = new AtomicReference<>();
 
-        executor.submit(() -> {
+        nativeTask = executor.submit(() -> {
             try (Arena arena = Arena.ofConfined()) {
                 Mcu.setenv(arena.allocateFrom("SDL_VIDEODRIVER"), arena.allocateFrom("dummy"), 1);
                 String[] args = {"sc55", "-mk2", "-p:1"}; // TODO make machine type changeable
@@ -88,16 +98,38 @@ logger.log(Level.WARNING, "already open: " + hashCode());
                 for (int i = 0; i < args.length; i++) {
                     argv.setAtIndex(ValueLayout.ADDRESS, i, arena.allocateFrom(args[i]));
                 }
-                Mcu.SC55_run(args.length, argv);
+                int r = Mcu.SC55_run(args.length, argv);
+logger.log(Level.DEBUG, "SC55_run returned: " + r);
+                if (r != 0) exception.set(new IllegalStateException("SC55_run failed: " + r));
             } catch (Throwable e) {
 logger.log(Level.ERROR, e.getMessage(), e);
                 exception.set(e instanceof Exception ? (Exception) e : new Exception(e));
             }
         });
 
-        try { Thread.sleep(2000); } catch (InterruptedException ignore) {}
+        // wait for the emulator to be ready
+        long limit = System.currentTimeMillis() + OPEN_TIMEOUT;
+        while (Mcu.SC55_isReady() == 0) {
+            if (exception.get() != null) throw new MidiUnavailableException(exception.get().getMessage());
+            if (nativeTask.isDone()) throw new MidiUnavailableException("SC55_run exited");
+            if (System.currentTimeMillis() > limit) throw new MidiUnavailableException("SC55 initialization timeout");
+            try { Thread.sleep(10); } catch (InterruptedException e) { throw new MidiUnavailableException(e.toString()); }
+        }
 
-        if (exception.get() != null) throw new MidiUnavailableException(exception.get().getMessage());
+        try {
+            int sampleRate = Mcu.SC55_getSampleRate();
+            AudioFormat format = new AudioFormat(sampleRate, 16, 2, true, ByteOrder.nativeOrder() == ByteOrder.BIG_ENDIAN);
+            line = AudioSystem.getSourceDataLine(format);
+            line.open(format, LINE_BUFFER_FRAMES * format.getFrameSize());
+            line.start();
+logger.log(Level.DEBUG, "line: " + format + ", buffer: " + line.getBufferSize());
+        } catch (LineUnavailableException | IllegalArgumentException e) {
+            Mcu.SC55_quit();
+            throw (MidiUnavailableException) new MidiUnavailableException(e.getMessage()).initCause(e);
+        }
+
+        rendering = true;
+        renderer.submit(this::render);
 
         //
         isOpen = true;
@@ -106,10 +138,55 @@ logger.log(Level.ERROR, e.getMessage(), e);
         start = timestamp;
     }
 
+    /** max wait time for the native emulator to start [msec] */
+    private static final long OPEN_TIMEOUT = 10_000;
+
+    /** samples (int16) pulled from the native side at once, 512 frames (~8 msec) */
+    private static final int READ_SAMPLES = 512 * 2;
+
+    /** java sound line buffer size, ~31 msec at 66207 Hz, must be smaller than the native ring buffer (8192 frames) */
+    private static final int LINE_BUFFER_FRAMES = 2048;
+
+    private SourceDataLine line;
+
+    private volatile boolean rendering;
+
+    /** runs {@code SC55_run()} */
+    private Future<?> nativeTask;
+
+    /** pulls samples from the native side, writes them to the line, paced by the line's blocking write */
+    private void render() {
+        byte[] buf = new byte[READ_SAMPLES * Short.BYTES];
+        MemorySegment segment = MemorySegment.ofArray(buf);
+        try {
+            while (rendering) {
+                int n = Mcu.SC55_readSamples(segment, READ_SAMPLES);
+                if (n <= 0) {
+                    Thread.sleep(1);
+                    continue;
+                }
+                line.write(buf, 0, n * Short.BYTES);
+            }
+        } catch (InterruptedException ignore) {
+        } catch (Throwable e) {
+logger.log(Level.ERROR, e.getMessage(), e);
+        }
+logger.log(Level.DEBUG, "render: exit");
+    }
+
+    /** for audio output */
+    private final ExecutorService renderer = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "sc55-jep454-render");
+        thread.setPriority(Thread.MAX_PRIORITY);
+        thread.setDaemon(true);
+        return thread;
+    });
+
     /** when midi spi */
     private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
-        Thread thread = new Thread(r);
+        Thread thread = new Thread(r, "sc55-jep454-native");
         thread.setPriority(Thread.NORM_PRIORITY);
+        thread.setDaemon(true);
         return thread;
     });
 
@@ -119,8 +196,37 @@ logger.log(Level.ERROR, e.getMessage(), e);
     @SuppressWarnings("ForLoopReplaceableByForEach")
     public void close() {
         isOpen = false;
-        for (int i = 0; i < receivers.size(); i++) receivers.get(i).close();
+        for (int i = receivers.size() - 1; i >= 0; i--) receivers.get(i).close();
+
+        // stop pulling first, the native side frees its buffer when SC55_run returns
+        rendering = false;
+        renderer.shutdown();
+        try {
+            if (!renderer.awaitTermination(1, TimeUnit.SECONDS)) {
+logger.log(Level.WARNING, "render thread did not stop");
+                if (line != null) line.flush(); // unblock write
+                renderer.shutdownNow();
+                renderer.awaitTermination(1, TimeUnit.SECONDS);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+
+        Mcu.SC55_quit();
         executor.shutdown();
+        try {
+            if (!executor.awaitTermination(3, TimeUnit.SECONDS)) {
+logger.log(Level.WARNING, "SC55_run did not return");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+
+        if (line != null) {
+            line.stop();
+            line.close();
+            line = null;
+        }
     }
 
     @Override
@@ -170,7 +276,8 @@ logger.log(Level.ERROR, e.getMessage(), e);
 
     @Override
     public long getLatency() {
-        return 33;
+        // native ring buffer (8192 frames) + line buffer, in microseconds
+        return (8192 + LINE_BUFFER_FRAMES) * 1_000_000L / 66207;
     }
 
     @Override

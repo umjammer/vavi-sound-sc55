@@ -96,6 +96,10 @@
                   <includeFunctions>
                     <includeFunction>SC55_run</includeFunction>
                     <includeFunction>SC55_postUART</includeFunction>
+                    <includeFunction>SC55_isReady</includeFunction>
+                    <includeFunction>SC55_getSampleRate</includeFunction>
+                    <includeFunction>SC55_readSamples</includeFunction>
+                    <includeFunction>SC55_quit</includeFunction>
                   </includeFunctions>
                 </configuration>
               </execution>

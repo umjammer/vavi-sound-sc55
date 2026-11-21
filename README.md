@@ -85,7 +85,7 @@ $ mvn -P run initialize antrun:run
      * ~~`Puyopuyo - 08 STICKER OF PUYOPUYO.mid` ... last fadeout part is weird~~
      * ~~use jep454 version~~ mostly the same
  * soundbank
- * jep454 sound output is core-audio, get buffer instead of.
+ * ~~jep454 sound output is core-audio, get buffer instead of.~~ pulled by `SC55_readSamples()` into a java sound line
 
 ---
 
